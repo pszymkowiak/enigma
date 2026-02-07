@@ -23,3 +23,10 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 sha2.workspace = true
+glob = "0.3"
+
+[features]
+default = []
+azure-keyvault = ["enigma-keys/azure-keyvault"]
+gcp-secretmanager = ["enigma-keys/gcp-secretmanager"]
+aws-secretsmanager = ["enigma-keys/aws-secretsmanager"]

@@ -3,9 +3,8 @@ use std::path::Path;
 
 use enigma_core::config::EnigmaConfig;
 use enigma_core::manifest::ManifestDb;
-use enigma_keys::local::LocalKeyProvider;
 
-pub fn run(base_dir: &Path, cli_passphrase: &Option<String>) -> Result<()> {
+pub async fn run(base_dir: &Path, cli_passphrase: &Option<String>) -> Result<()> {
     println!("Initializing Enigma in {}", base_dir.display());
 
     // Create base directory
@@ -29,14 +28,30 @@ pub fn run(base_dir: &Path, cli_passphrase: &Option<String>) -> Result<()> {
     let _db = ManifestDb::open(db_path)?;
     println!("Initialized database: {}", db_path.display());
 
-    // Initialize key provider
-    let keyfile_path = Path::new(&config.enigma.keyfile_path);
-    if keyfile_path.exists() {
-        println!("Keyfile already exists: {}", keyfile_path.display());
+    // Initialize key provider via factory
+    if config.enigma.key_provider == "local" {
+        let keyfile_path = Path::new(&config.enigma.keyfile_path);
+        if keyfile_path.exists() {
+            println!("Keyfile already exists: {}", keyfile_path.display());
+        } else {
+            let passphrase = crate::get_passphrase(cli_passphrase)?;
+            enigma_keys::factory::create_key_provider(
+                "local",
+                Some(passphrase.as_bytes()),
+                &config.enigma.keyfile_path,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+            println!("Created keyfile: {}", keyfile_path.display());
+        }
     } else {
-        let passphrase = crate::get_passphrase(cli_passphrase)?;
-        LocalKeyProvider::create(keyfile_path, passphrase.as_bytes())?;
-        println!("Created keyfile: {}", keyfile_path.display());
+        println!(
+            "Key provider '{}' configured — keys managed externally.",
+            config.enigma.key_provider
+        );
     }
 
     println!("\nEnigma initialized. Next steps:");

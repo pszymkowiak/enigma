@@ -21,9 +21,26 @@ http-body-util.workspace = true
 s3s.workspace = true
 s3s-aws.workspace = true
 tower.workspace = true
+bytes.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 toml.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+
+# TLS (optional)
+tokio-rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+
+# Metrics (optional)
+prometheus = { workspace = true, optional = true }
+
+[features]
+default = []
+tls = ["dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls"]
+metrics = ["dep:prometheus"]
+azure-keyvault = ["enigma-keys/azure-keyvault"]
+gcp-secretmanager = ["enigma-keys/gcp-secretmanager"]
+aws-secretsmanager = ["enigma-keys/aws-secretsmanager"]

@@ -8,8 +8,6 @@ use enigma_core::crypto::encrypt_chunk;
 use enigma_core::distributor::Distributor;
 use enigma_core::manifest::ManifestDb;
 use enigma_core::types::{ChunkStrategy, DistributionStrategy, KeyMaterial, ProviderType};
-use enigma_keys::local::LocalKeyProvider;
-use enigma_keys::provider::KeyProvider;
 use enigma_storage::local::LocalStorageProvider;
 
 use super::providers::init_providers;
@@ -25,10 +23,22 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
     // Open database
     let db = ManifestDb::open(Path::new(&config.enigma.db_path))?;
 
-    // Get encryption key
-    let passphrase = crate::get_passphrase(cli_passphrase)?;
-    let keyfile_path = Path::new(&config.enigma.keyfile_path);
-    let key_provider = LocalKeyProvider::open(keyfile_path, passphrase.as_bytes())?;
+    // Get encryption key via factory
+    let passphrase = if config.enigma.key_provider == "local" {
+        Some(crate::get_passphrase(cli_passphrase)?)
+    } else {
+        None
+    };
+    let key_provider = enigma_keys::factory::create_key_provider(
+        &config.enigma.key_provider,
+        passphrase.as_deref().map(|s| s.as_bytes()),
+        &config.enigma.keyfile_path,
+        config.enigma.vault_url.as_deref(),
+        config.enigma.gcp_project_id.as_deref(),
+        config.enigma.aws_region.as_deref(),
+        config.enigma.secret_prefix.as_deref(),
+    )
+    .await?;
     let managed_key = key_provider.get_current_key().await?;
     let key_material = KeyMaterial {
         id: managed_key.id.clone(),

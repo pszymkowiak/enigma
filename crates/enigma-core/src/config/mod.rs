@@ -1,3 +1,5 @@
+pub mod credentials;
+
 use crate::error::{EnigmaError, Result};
 use crate::types::{ChunkStrategy, DistributionStrategy, ProviderType};
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,18 @@ pub struct EnigmaSettings {
     /// Compression settings.
     #[serde(default)]
     pub compression: CompressionConfig,
+    /// Azure Key Vault URL (for key_provider = "azure-keyvault").
+    #[serde(default)]
+    pub vault_url: Option<String>,
+    /// GCP project ID (for key_provider = "gcp-secretmanager").
+    #[serde(default)]
+    pub gcp_project_id: Option<String>,
+    /// AWS region (for key_provider = "aws-secretsmanager").
+    #[serde(default)]
+    pub aws_region: Option<String>,
+    /// Secret name prefix used in vault backends (default: "enigma-key").
+    #[serde(default)]
+    pub secret_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +131,10 @@ impl EnigmaConfig {
                 key_provider: "local".to_string(),
                 keyfile_path: base_dir.join("keys.enc").display().to_string(),
                 compression: CompressionConfig::default(),
+                vault_url: None,
+                gcp_project_id: None,
+                aws_region: None,
+                secret_prefix: None,
             },
             providers: vec![],
         }

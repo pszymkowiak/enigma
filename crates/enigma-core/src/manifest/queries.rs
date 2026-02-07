@@ -321,6 +321,49 @@ impl ManifestDb {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    // ── GC (Garbage Collection) ──────────────────────────────
+
+    /// Find orphaned chunks: chunks with ref_count <= 0 that are not referenced
+    /// by any file_chunks or object_chunks.
+    pub fn find_orphan_chunks(&self) -> Result<Vec<(String, i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.hash, c.provider_id, c.storage_key FROM chunks c
+             WHERE c.ref_count <= 0
+             AND NOT EXISTS (SELECT 1 FROM file_chunks fc WHERE fc.chunk_hash = c.hash)
+             AND NOT EXISTS (SELECT 1 FROM object_chunks oc WHERE oc.chunk_hash = c.hash)",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Delete a chunk record by hash.
+    pub fn delete_chunk_record(&self, hash: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM chunks WHERE hash = ?1", params![hash])?;
+        Ok(())
+    }
+
+    /// Get chunk stats: (total_chunks, orphan_chunks).
+    pub fn chunk_stats(&self) -> Result<(u64, u64)> {
+        let total: u64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        let orphans: u64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chunks WHERE ref_count <= 0
+             AND NOT EXISTS (SELECT 1 FROM file_chunks fc WHERE fc.chunk_hash = chunks.hash)
+             AND NOT EXISTS (SELECT 1 FROM object_chunks oc WHERE oc.chunk_hash = chunks.hash)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((total, orphans))
+    }
+
     // ── S3 Gateway: Namespaces ───────────────────────────────
 
     pub fn create_namespace(&self, name: &str) -> Result<i64> {

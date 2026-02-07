@@ -21,5 +21,23 @@ hkdf.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
+# Vault SDKs (behind features)
+azure_security_keyvault_secrets = { workspace = true, optional = true }
+azure_identity = { workspace = true, optional = true }
+google-cloud-secretmanager-v1 = { workspace = true, optional = true }
+google-cloud-gax = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+
+# AWS Secrets Manager (behind feature)
+aws-sdk-secretsmanager = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+
+[features]
+default = []
+azure-keyvault = ["dep:azure_security_keyvault_secrets", "dep:azure_identity", "dep:futures"]
+gcp-secretmanager = ["dep:google-cloud-secretmanager-v1", "dep:google-cloud-gax", "dep:bytes"]
+aws-secretsmanager = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
+
 [dev-dependencies]
 tempfile = "3"

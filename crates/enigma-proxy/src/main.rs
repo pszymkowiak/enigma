@@ -1,3 +1,6 @@
+#[cfg(feature = "metrics")]
+mod metrics;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -11,8 +14,6 @@ use enigma_core::config::{EnigmaConfig, ProviderConfig};
 use enigma_core::distributor::Distributor;
 use enigma_core::manifest::ManifestDb;
 use enigma_core::types::{DistributionStrategy, KeyMaterial, ProviderType};
-use enigma_keys::local::LocalKeyProvider;
-use enigma_keys::provider::KeyProvider;
 use enigma_s3::EnigmaS3State;
 use enigma_s3::auth::EnigmaS3Auth;
 use enigma_s3::service::EnigmaS3Service;
@@ -54,6 +55,15 @@ struct S3ProxyConfig {
     secret_key: String,
     #[serde(default = "default_region")]
     default_region: String,
+    /// Path to TLS certificate PEM file (enables HTTPS).
+    #[serde(default)]
+    tls_cert: Option<String>,
+    /// Path to TLS private key PEM file.
+    #[serde(default)]
+    tls_key: Option<String>,
+    /// Address for the Prometheus metrics endpoint (e.g. "0.0.0.0:9090").
+    #[serde(default)]
+    metrics_addr: Option<String>,
 }
 
 impl Default for S3ProxyConfig {
@@ -63,6 +73,9 @@ impl Default for S3ProxyConfig {
             access_key: default_access_key(),
             secret_key: default_secret_key(),
             default_region: default_region(),
+            tls_cert: None,
+            tls_key: None,
+            metrics_addr: None,
         }
     }
 }
@@ -112,17 +125,22 @@ async fn main() -> anyhow::Result<()> {
     // Open manifest DB
     let db = ManifestDb::open(Path::new(&proxy_config.enigma.db_path))?;
 
-    // Get encryption key
-    let passphrase = get_passphrase(&cli.passphrase)?;
-    let keyfile_path = Path::new(&proxy_config.enigma.keyfile_path);
-
-    // Create keyfile if it doesn't exist
-    let key_provider = if keyfile_path.exists() {
-        LocalKeyProvider::open(keyfile_path, passphrase.as_bytes())?
+    // Get encryption key via factory
+    let passphrase = if proxy_config.enigma.key_provider == "local" {
+        Some(get_passphrase(&cli.passphrase)?)
     } else {
-        tracing::info!("Creating new keyfile at {}", keyfile_path.display());
-        LocalKeyProvider::create(keyfile_path, passphrase.as_bytes())?
+        None
     };
+    let key_provider = enigma_keys::factory::create_key_provider(
+        &proxy_config.enigma.key_provider,
+        passphrase.as_deref().map(|s| s.as_bytes()),
+        &proxy_config.enigma.keyfile_path,
+        proxy_config.enigma.vault_url.as_deref(),
+        proxy_config.enigma.gcp_project_id.as_deref(),
+        proxy_config.enigma.aws_region.as_deref(),
+        proxy_config.enigma.secret_prefix.as_deref(),
+    )
+    .await?;
 
     let managed_key = key_provider.get_current_key().await?;
     let key_material = KeyMaterial {
@@ -261,7 +279,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("No Raft config — running as single node");
     }
 
-    // Start HTTP server
+    // Optionally start Prometheus metrics server
+    #[cfg(feature = "metrics")]
+    if let Some(ref metrics_addr) = proxy_config.s3_proxy.metrics_addr {
+        let addr: SocketAddr = metrics_addr.parse()?;
+        tracing::info!("Starting metrics server on {addr}");
+        tokio::spawn(metrics::serve_metrics(addr));
+    }
+
+    // Start HTTP/HTTPS server
     let addr: SocketAddr = proxy_config.s3_proxy.listen_addr.parse()?;
     tracing::info!("Starting Enigma S3 proxy on {addr}");
     tracing::info!("  Access key: {}", proxy_config.s3_proxy.access_key);
@@ -272,17 +298,76 @@ async fn main() -> anyhow::Result<()> {
     // Use hyper to serve the s3s service
     let shared_service = s3_service.into_shared();
 
+    // Optionally load TLS config
+    #[cfg(feature = "tls")]
+    let tls_acceptor = match (
+        &proxy_config.s3_proxy.tls_cert,
+        &proxy_config.s3_proxy.tls_key,
+    ) {
+        (Some(cert_path), Some(key_path)) => {
+            let acceptor = load_tls_config(cert_path, key_path)?;
+            tracing::info!("TLS enabled");
+            Some(acceptor)
+        }
+        _ => None,
+    };
+
     loop {
         let (stream, _remote_addr) = listener.accept().await?;
         let service = shared_service.clone();
+
+        #[cfg(feature = "tls")]
+        let tls_acceptor = tls_acceptor.clone();
+
         tokio::spawn(async move {
-            let io = hyper_util::rt::TokioIo::new(stream);
             let builder =
                 hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
-            let conn = builder.serve_connection(io, service);
-            if let Err(e) = conn.await {
+
+            #[cfg(feature = "tls")]
+            if let Some(ref acceptor) = tls_acceptor {
+                match acceptor.accept(stream).await {
+                    Ok(tls_stream) => {
+                        let io = hyper_util::rt::TokioIo::new(tls_stream);
+                        if let Err(e) = builder.serve_connection(io, service).await {
+                            tracing::error!("TLS connection error: {e}");
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("TLS handshake error: {e}");
+                        return;
+                    }
+                }
+            }
+
+            let io = hyper_util::rt::TokioIo::new(stream);
+            if let Err(e) = builder.serve_connection(io, service).await {
                 tracing::error!("Connection error: {e}");
             }
         });
     }
+}
+
+#[cfg(feature = "tls")]
+fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<tokio_rustls::TlsAcceptor> {
+    use rustls::ServerConfig;
+    use std::io::BufReader;
+    use tokio_rustls::TlsAcceptor;
+
+    let cert_file = std::fs::File::open(cert_path)
+        .map_err(|e| anyhow::anyhow!("Cannot open TLS cert {cert_path}: {e}"))?;
+    let key_file = std::fs::File::open(key_path)
+        .map_err(|e| anyhow::anyhow!("Cannot open TLS key {key_path}: {e}"))?;
+
+    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))?
+        .ok_or_else(|| anyhow::anyhow!("No private key found in {key_path}"))?;
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+
+    Ok(TlsAcceptor::from(std::sync::Arc::new(config)))
 }

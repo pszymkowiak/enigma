@@ -49,8 +49,8 @@ The hash is always computed on the **original plaintext**, so deduplication work
 |-------|------|
 | **enigma-core** | Chunking (FastCDC / Fixed), crypto (AES-256-GCM), dedup (SHA-256), compression (zstd), distributor, manifest (SQLite), config (TOML) |
 | **enigma-storage** | `StorageProvider` trait + implementations: Local, S3, S3-compatible, Azure Blob, GCS |
-| **enigma-keys** | `KeyProvider` trait + local hybrid post-quantum implementation (Argon2id + ML-KEM-768) |
-| **enigma-cli** | CLI binary (`enigma`) — init, backup, restore, verify, list, status, config |
+| **enigma-keys** | `KeyProvider` trait + local hybrid post-quantum (Argon2id + ML-KEM-768), Azure Key Vault, GCP Secret Manager, AWS Secrets Manager |
+| **enigma-cli** | CLI binary (`enigma`) — init, backup, restore, verify, list, status, config, gc, encrypt-cred |
 | **enigma-s3** | S3 frontend built on s3s v0.11 — PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2, buckets, multipart |
 | **enigma-raft** | Raft consensus (openraft v0.9 + tonic gRPC) — state machine wrapping ManifestDb for HA metadata replication |
 | **enigma-proxy** | Binary combining S3 gateway + Raft — single-node or cluster mode |
@@ -66,6 +66,12 @@ The hash is always computed on the **original plaintext**, so deduplication work
 - **S3-compatible gateway** — full CRUD, multipart uploads, ListObjectsV2 with prefix/delimiter
 - **Raft HA** — 3-node consensus for metadata replication (data goes direct to backends)
 - **Single-node mode** — works without Raft, local storage fallback if no providers configured
+- **Vault key providers** — Azure Key Vault, GCP Secret Manager, AWS Secrets Manager (behind feature flags)
+- **TLS S3 gateway** — optional HTTPS with rustls (PEM cert/key)
+- **Prometheus metrics** — `/metrics` endpoint on configurable port (behind `metrics` feature)
+- **Encrypted credentials** — AES-256-GCM encrypted secrets in TOML config (`enc:` prefix)
+- **Garbage collection** — `enigma gc` to find and delete orphaned chunks (with `--dry-run`)
+- **Selective restore** — `--path`, `--glob`, `--list` filters on restore
 - **Audit trail** — SQLite manifest with backup logs and chunk reference counting
 - **Key rotation** — generate new hybrid keys, old keys remain accessible by ID
 
@@ -94,8 +100,18 @@ ML-KEM-768 encapsulate(ek) ──> 32-byte shared secret ────┘
 
 ### Secrets Management
 
-Currently, cloud credentials are stored in the TOML config file or passed via environment variables. There is **no vault integration yet** — the architecture is ready for it (`key_provider` field supports future `"vault"`, `"aws-secrets"`, `"azure-keyvault"`, `"gcp-secretmanager"` backends), but for now secrets management relies on:
+Enigma supports multiple key provider backends. Set `key_provider` in config:
 
+| Provider | `key_provider` | Required config | Feature flag |
+|----------|---------------|-----------------|-------------|
+| Local (default) | `"local"` | `keyfile_path` + passphrase | — |
+| Azure Key Vault | `"azure-keyvault"` | `vault_url` | `--features azure-keyvault` |
+| GCP Secret Manager | `"gcp-secretmanager"` | `gcp_project_id` | `--features gcp-secretmanager` |
+| AWS Secrets Manager | `"aws-secretsmanager"` | `aws_region` | `--features aws-secretsmanager` |
+
+Cloud credentials in config can be encrypted with `enigma encrypt-cred <value>` — produces an `enc:...` token to paste in TOML.
+
+Additional security:
 - File permissions on `enigma.toml`
 - Environment variables (`ENIGMA_PASSPHRASE`, AWS env vars, etc.)
 - The keyfile itself is encrypted with the passphrase
@@ -107,6 +123,10 @@ Currently, cloud credentials are stored in the TOML config file or passed via en
 ```bash
 # Prerequisites: Rust 1.85+, protoc (for tonic/prost)
 cargo build --release --workspace
+
+# With optional features
+cargo build --release -p enigma-cli --features azure-keyvault,gcp-secretmanager,aws-secretsmanager
+cargo build --release -p enigma-proxy --features tls,metrics,azure-keyvault,gcp-secretmanager,aws-secretsmanager
 
 # Binary locations
 ls target/release/enigma        # CLI
@@ -128,8 +148,20 @@ enigma list
 # Verify integrity
 enigma --passphrase "my-secret" verify <backup-id>
 
-# Restore
+# Restore (full)
 enigma --passphrase "my-secret" restore <backup-id> /path/to/restore
+
+# Selective restore
+enigma --passphrase "my-secret" restore <backup-id> /dest --path docs/     # prefix filter
+enigma --passphrase "my-secret" restore <backup-id> /dest --glob "*.rs"    # glob filter
+enigma --passphrase "my-secret" restore <backup-id> /dest --list           # list files only
+
+# Garbage collection
+enigma gc --dry-run    # list orphaned chunks
+enigma gc              # delete orphaned chunks
+
+# Encrypt a credential for config
+enigma --passphrase "my-secret" encrypt-cred "my-aws-secret-key"
 
 # Show status / config
 enigma status
@@ -156,9 +188,13 @@ aws --endpoint-url http://localhost:8333 s3 cp s3://my-bucket/file.txt restored.
 ```toml
 [enigma]
 db_path = "/home/user/.enigma/enigma.db"
-key_provider = "local"                    # "local" (only option for now)
+key_provider = "local"                    # "local" | "azure-keyvault" | "gcp-secretmanager" | "aws-secretsmanager"
 keyfile_path = "/home/user/.enigma/keys.enc"
 distribution = "RoundRobin"              # "RoundRobin" | "Weighted"
+# vault_url = "https://my-vault.vault.azure.net/"  # for azure-keyvault
+# gcp_project_id = "my-project"                     # for gcp-secretmanager
+# aws_region = "us-east-1"                          # for aws-secretsmanager
+# secret_prefix = "enigma-key"                      # prefix for vault secret names
 
 # Chunking — pick one:
 [enigma.chunk_strategy.Cdc]
@@ -178,6 +214,9 @@ listen_addr = "0.0.0.0:8333"
 access_key = "enigma-admin"
 secret_key = "enigma-secret"
 default_region = "us-east-1"
+# tls_cert = "/path/to/cert.pem"         # enables HTTPS (feature: tls)
+# tls_key = "/path/to/key.pem"
+# metrics_addr = "0.0.0.0:9090"          # Prometheus endpoint (feature: metrics)
 
 # Storage providers — add as many as needed
 [[providers]]
@@ -258,6 +297,7 @@ addr = "enigma-2.enigma:9000"
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS credentials (for S3 provider) |
 | `AZURE_STORAGE_ACCOUNT` / `AZURE_STORAGE_KEY` | Azure credentials |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON |
+| `AWS_REGION` | AWS region for Secrets Manager key provider |
 | `RUST_LOG` | Log level filter (e.g., `enigma=info,tower=warn`) |
 
 ## S3 API Compatibility
@@ -280,16 +320,34 @@ addr = "enigma-2.enigma:9000"
 
 ## Tests
 
-### Unit Tests (42 tests)
+### Unit Tests (49 tests)
 
 ```
 cargo test --workspace
 
-enigma-core .......... 34 tests (chunking, crypto, compression, config, dedup, distributor, manifest, types)
+enigma-core .......... 36 tests (chunking, crypto, compression, config, credentials, dedup, distributor, manifest, types)
 enigma-keys ..........  5 tests (ML-KEM keypair, hybrid derivation, rotation, wrong passphrase)
-enigma-storage .......  3 tests (local provider: upload, download, roundtrip)
+enigma-storage .......  4 tests (local + S3 provider tests)
+enigma-keys (vault) ..  4 tests (Azure KV, GCP SM — behind features + real credentials)
+enigma-keys (aws) ....  2 tests (AWS SM — behind feature + real credentials)
                        ──
-                       42 passed, 0 failed
+                       49+ passed, 0 failed
+```
+
+### Vault tests (require real credentials)
+
+```bash
+# Azure Key Vault
+AZURE_KEYVAULT_URL="https://my-vault.vault.azure.net/" \
+  cargo test -p enigma-keys --features azure-keyvault --test vault_providers
+
+# GCP Secret Manager
+GCP_PROJECT_ID=my-project \
+  cargo test -p enigma-keys --features gcp-secretmanager --test vault_providers
+
+# AWS Secrets Manager
+AWS_REGION=us-east-1 \
+  cargo test -p enigma-keys --features aws-secretsmanager --test vault_providers
 ```
 
 ### Test Coverage
@@ -300,6 +358,7 @@ enigma-storage .......  3 tests (local provider: upload, download, roundtrip)
 | `chunk::fixed` | Empty file, exact multiple, remainder handling |
 | `compression` | Roundtrip compress/decompress, empty data |
 | `config` | TOML roundtrip serialization, missing file error |
+| `config::credentials` | Encrypt/decrypt roundtrip, plaintext passthrough |
 | `crypto` | Encrypt/decrypt roundtrip (raw + chunk), wrong key rejection, wrong AAD rejection, unique nonces |
 | `dedup` | Deterministic hashing, different data → different hashes, duplicate detection |
 | `distributor` | Round-robin cycling, weighted distribution, provider lookup |
@@ -307,6 +366,7 @@ enigma-storage .......  3 tests (local provider: upload, download, roundtrip)
 | `manifest::queries` | Full backup flow, list ordering, chunk dedup ref counting, logs |
 | `types` | ChunkHash hex roundtrip, storage key format, KeyMaterial zeroize, ProviderType parsing |
 | `keys::local` | Create/open keyfile, wrong passphrase, ML-KEM sizes, hybrid key independence, rotation |
+| `keys::vault` | Azure KV, GCP SM, AWS SM — create, get, rotate, list (integration) |
 | `storage::local` | Connection test, upload/download roundtrip, manifest roundtrip |
 
 ### E2E Test
@@ -360,11 +420,15 @@ enigma-proxy --config /etc/enigma/config.toml
 
 ## Roadmap
 
-- [ ] Vault integration for secrets (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager)
+- [x] Vault integration for secrets (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager)
+- [x] Prometheus metrics endpoint
+- [x] TLS support for S3 gateway
+- [x] Encrypted credentials in config
+- [x] Garbage collection for orphaned chunks
+- [x] Selective restore (path/glob filters)
 - [ ] Incremental backups (only changed files)
 - [ ] Bandwidth throttling
 - [ ] Web UI dashboard
-- [ ] Prometheus metrics endpoint
 - [ ] Snapshot-based Raft recovery
 - [ ] Erasure coding (Reed-Solomon) as alternative to replication
 

@@ -74,3 +74,26 @@ pub async fn init_providers(
 
     Ok(storage_providers)
 }
+
+#[allow(dead_code)]
+/// Decrypt provider credentials if they are encrypted (enc: prefix).
+/// Returns (access_key, secret_key) as plaintext.
+pub fn decrypt_provider_creds(
+    pc: &ProviderConfig,
+    encryption_key: &[u8; 32],
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    use enigma_core::config::credentials::decrypt_credential;
+
+    let access_key = pc
+        .access_key
+        .as_deref()
+        .map(|v| decrypt_credential(v, encryption_key))
+        .transpose()?;
+    let secret_key = pc
+        .secret_key
+        .as_deref()
+        .map(|v| decrypt_credential(v, encryption_key))
+        .transpose()?;
+
+    Ok((access_key, secret_key))
+}

@@ -1,5 +1,7 @@
 pub mod backup;
 pub mod config;
+pub mod encrypt_cred;
+pub mod gc;
 pub mod init;
 pub mod list;
 pub mod providers;

@@ -38,6 +38,15 @@ enum Commands {
         backup_id: String,
         /// Destination directory
         dest: PathBuf,
+        /// Only restore files matching this path prefix
+        #[arg(long)]
+        path: Option<String>,
+        /// Only restore files matching this glob pattern
+        #[arg(long)]
+        glob: Option<String>,
+        /// List matching files without restoring
+        #[arg(long)]
+        list: bool,
     },
 
     /// List all backups
@@ -54,6 +63,19 @@ enum Commands {
 
     /// Show current configuration
     Config,
+
+    /// Garbage collect orphaned chunks
+    Gc {
+        /// List orphans without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Encrypt a credential value for use in TOML config
+    EncryptCred {
+        /// The plaintext value to encrypt
+        value: String,
+    },
 }
 
 /// Get passphrase from CLI arg, env var, or interactive prompt.
@@ -88,18 +110,24 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
 
     match cli.command {
-        Commands::Init => commands::init::run(&base_dir, &cli.passphrase),
+        Commands::Init => rt.block_on(commands::init::run(&base_dir, &cli.passphrase)),
         Commands::Backup { ref path } => {
             rt.block_on(commands::backup::run(path, &base_dir, &cli.passphrase))
         }
         Commands::Restore {
             ref backup_id,
             ref dest,
+            ref path,
+            ref glob,
+            list,
         } => rt.block_on(commands::restore::run(
             backup_id,
             dest,
             &base_dir,
             &cli.passphrase,
+            path.as_deref(),
+            glob.as_deref(),
+            list,
         )),
         Commands::List => commands::list::run(&base_dir),
         Commands::Status => commands::status::run(&base_dir),
@@ -107,5 +135,11 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(commands::verify::run(backup_id, &base_dir, &cli.passphrase))
         }
         Commands::Config => commands::config::run(&base_dir),
+        Commands::Gc { dry_run } => rt.block_on(commands::gc::run(&base_dir, dry_run)),
+        Commands::EncryptCred { ref value } => rt.block_on(commands::encrypt_cred::run(
+            value,
+            &base_dir,
+            &cli.passphrase,
+        )),
     }
 }

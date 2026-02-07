@@ -7,8 +7,6 @@ use enigma_core::crypto::decrypt_chunk;
 use enigma_core::dedup::compute_hash;
 use enigma_core::manifest::ManifestDb;
 use enigma_core::types::{ChunkHash, EncryptedChunk, KeyMaterial};
-use enigma_keys::local::LocalKeyProvider;
-use enigma_keys::provider::KeyProvider;
 
 use super::providers::init_providers;
 
@@ -17,6 +15,9 @@ pub async fn run(
     dest: &Path,
     base_dir: &Path,
     cli_passphrase: &Option<String>,
+    path_filter: Option<&str>,
+    glob_filter: Option<&str>,
+    list_only: bool,
 ) -> Result<()> {
     println!("Restoring backup {backup_id} to {}", dest.display());
 
@@ -34,10 +35,22 @@ pub async fn run(
         backup.total_files, backup.total_bytes, backup.created_at
     );
 
-    // Get key provider
-    let passphrase = crate::get_passphrase(cli_passphrase)?;
-    let keyfile_path = Path::new(&config.enigma.keyfile_path);
-    let key_provider = LocalKeyProvider::open(keyfile_path, passphrase.as_bytes())?;
+    // Get key provider via factory
+    let passphrase = if config.enigma.key_provider == "local" {
+        Some(crate::get_passphrase(cli_passphrase)?)
+    } else {
+        None
+    };
+    let key_provider = enigma_keys::factory::create_key_provider(
+        &config.enigma.key_provider,
+        passphrase.as_deref().map(|s| s.as_bytes()),
+        &config.enigma.keyfile_path,
+        config.enigma.vault_url.as_deref(),
+        config.enigma.gcp_project_id.as_deref(),
+        config.enigma.aws_region.as_deref(),
+        config.enigma.secret_prefix.as_deref(),
+    )
+    .await?;
 
     // Initialize storage providers
     let storage_providers = init_providers(&config.providers, &db).await?;
@@ -46,7 +59,35 @@ pub async fn run(
     std::fs::create_dir_all(dest)?;
 
     // Get files in this backup
-    let files = db.list_backup_files(backup_id)?;
+    let all_files = db.list_backup_files(backup_id)?;
+
+    // Apply filters
+    let glob_pattern = glob_filter.map(|g| glob::Pattern::new(g)).transpose()?;
+    let files: Vec<_> = all_files
+        .into_iter()
+        .filter(|(_id, path, _size, _hash)| {
+            if let Some(prefix) = path_filter {
+                if !path.starts_with(prefix) {
+                    return false;
+                }
+            }
+            if let Some(ref pat) = glob_pattern {
+                if !pat.matches(path) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    if list_only {
+        println!("\nFiles in backup ({} matching):", files.len());
+        for (_id, path, size, hash) in &files {
+            println!("  {path}  ({size} bytes)  {hash}");
+        }
+        return Ok(());
+    }
+
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()

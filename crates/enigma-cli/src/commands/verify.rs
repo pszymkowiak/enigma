@@ -1,15 +1,12 @@
 use anyhow::Result;
 use std::path::Path;
 
+use super::providers::init_providers;
 use enigma_core::config::EnigmaConfig;
 use enigma_core::crypto::decrypt_chunk;
 use enigma_core::dedup::compute_hash;
 use enigma_core::manifest::ManifestDb;
 use enigma_core::types::{ChunkHash, EncryptedChunk, KeyMaterial};
-use enigma_keys::local::LocalKeyProvider;
-use enigma_keys::provider::KeyProvider;
-
-use super::providers::init_providers;
 
 pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<String>) -> Result<()> {
     println!("Verifying backup {backup_id}...");
@@ -20,9 +17,21 @@ pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<Strin
 
     let _backup = db.get_backup(backup_id)?;
 
-    let passphrase = crate::get_passphrase(cli_passphrase)?;
-    let keyfile_path = Path::new(&config.enigma.keyfile_path);
-    let key_provider = LocalKeyProvider::open(keyfile_path, passphrase.as_bytes())?;
+    let passphrase = if config.enigma.key_provider == "local" {
+        Some(crate::get_passphrase(cli_passphrase)?)
+    } else {
+        None
+    };
+    let key_provider = enigma_keys::factory::create_key_provider(
+        &config.enigma.key_provider,
+        passphrase.as_deref().map(|s| s.as_bytes()),
+        &config.enigma.keyfile_path,
+        config.enigma.vault_url.as_deref(),
+        config.enigma.gcp_project_id.as_deref(),
+        config.enigma.aws_region.as_deref(),
+        config.enigma.secret_prefix.as_deref(),
+    )
+    .await?;
 
     // Storage providers
     let storage_providers = init_providers(&config.providers, &db).await?;
