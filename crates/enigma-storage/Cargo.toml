@@ -1,0 +1,29 @@
+[package]
+name = "enigma-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+sha2.workspace = true
+
+# Cloud SDKs (behind features)
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+azure_storage = { workspace = true, optional = true }
+azure_storage_blobs = { workspace = true, optional = true }
+google-cloud-storage = { workspace = true, optional = true }
+
+[features]
+default = ["s3", "azure", "gcs"]
+s3 = ["dep:aws-sdk-s3", "dep:aws-config"]
+azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
+gcs = ["dep:google-cloud-storage"]
+
+[dev-dependencies]
+tempfile = "3"

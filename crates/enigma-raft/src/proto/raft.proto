@@ -1,0 +1,42 @@
+syntax = "proto3";
+package enigma.raft;
+
+service RaftService {
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc Vote(VoteRequest) returns (VoteResponse);
+    rpc InstallSnapshot(stream SnapshotChunk) returns (InstallSnapshotResponse);
+    // Client forwarding: follower → leader
+    rpc ForwardWrite(WriteRequest) returns (WriteResponse);
+}
+
+message AppendEntriesRequest {
+    bytes data = 1; // JSON-serialized openraft AppendEntriesRequest
+}
+
+message AppendEntriesResponse {
+    bytes data = 1; // JSON-serialized openraft AppendEntriesResponse
+}
+
+message VoteRequest {
+    bytes data = 1; // JSON-serialized openraft VoteRequest
+}
+
+message VoteResponse {
+    bytes data = 1; // JSON-serialized openraft VoteResponse
+}
+
+message SnapshotChunk {
+    bytes data = 1;
+}
+
+message InstallSnapshotResponse {
+    bytes data = 1;
+}
+
+message WriteRequest {
+    bytes data = 1; // JSON-serialized RaftRequest
+}
+
+message WriteResponse {
+    bytes data = 1; // JSON-serialized RaftResponse
+}

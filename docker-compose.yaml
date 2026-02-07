@@ -1,0 +1,88 @@
+# Local development: 3 Enigma proxy nodes + 3 RustFS backends
+version: "3.8"
+
+services:
+  # ── RustFS backends ──────────────────────────────────
+  rustfs-1:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-1
+      RUSTFS_SECRET_KEY: enigma-secret-1
+    volumes:
+      - rustfs1-data:/data
+    ports:
+      - "19001:9000"
+
+  rustfs-2:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-2
+      RUSTFS_SECRET_KEY: enigma-secret-2
+    volumes:
+      - rustfs2-data:/data
+    ports:
+      - "19002:9000"
+
+  rustfs-3:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-3
+      RUSTFS_SECRET_KEY: enigma-secret-3
+    volumes:
+      - rustfs3-data:/data
+    ports:
+      - "19003:9000"
+
+  # ── Enigma proxy nodes ──────────────────────────────
+  enigma-0:
+    build: .
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    volumes:
+      - enigma0-data:/data
+      - ./dev/config-node1.toml:/etc/enigma/config.toml:ro
+    ports:
+      - "8333:8333"
+      - "9100:9000"
+
+  enigma-1:
+    build: .
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    volumes:
+      - enigma1-data:/data
+      - ./dev/config-node2.toml:/etc/enigma/config.toml:ro
+    ports:
+      - "8334:8333"
+      - "9101:9000"
+
+  enigma-2:
+    build: .
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    volumes:
+      - enigma2-data:/data
+      - ./dev/config-node3.toml:/etc/enigma/config.toml:ro
+    ports:
+      - "8335:8333"
+      - "9102:9000"
+
+volumes:
+  rustfs1-data:
+  rustfs2-data:
+  rustfs3-data:
+  enigma0-data:
+  enigma1-data:
+  enigma2-data:

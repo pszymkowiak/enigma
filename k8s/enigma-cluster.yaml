@@ -1,0 +1,197 @@
+# Enigma S3 Proxy — 3-node StatefulSet with Raft consensus
+# Deploys alongside the 3 RustFS backends from rustfs.yaml
+
+---
+# Headless service for stable DNS (enigma-0.enigma, etc.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: enigma
+  namespace: enigma-test
+spec:
+  clusterIP: None
+  selector:
+    app: enigma
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: 8333
+    - name: raft
+      port: 9000
+      targetPort: 9000
+---
+# ClusterIP service for S3 client access
+apiVersion: v1
+kind: Service
+metadata:
+  name: enigma-s3
+  namespace: enigma-test
+spec:
+  type: ClusterIP
+  selector:
+    app: enigma
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: 8333
+---
+# ConfigMap with base config template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enigma-config
+  namespace: enigma-test
+data:
+  config-template.toml: |
+    [enigma]
+    db_path = "/data/enigma.db"
+    key_provider = "local"
+    keyfile_path = "/data/keys.enc"
+    distribution = "RoundRobin"
+
+    [enigma.chunk_strategy.Cdc]
+    target_size = 4194304
+
+    [s3_proxy]
+    listen_addr = "0.0.0.0:8333"
+    access_key = "enigma-admin"
+    secret_key = "enigma-secret"
+    default_region = "us-east-1"
+
+    [[providers]]
+    name = "rustfs-1"
+    provider_type = "S3Compatible"
+    bucket = "enigma-chunks"
+    endpoint_url = "http://rustfs-1.enigma-test.svc.cluster.local:9000"
+    path_style = true
+    access_key = "enigma-key-1"
+    secret_key = "enigma-secret-1"
+    weight = 1
+
+    [[providers]]
+    name = "rustfs-2"
+    provider_type = "S3Compatible"
+    bucket = "enigma-chunks"
+    endpoint_url = "http://rustfs-2.enigma-test.svc.cluster.local:9000"
+    path_style = true
+    access_key = "enigma-key-2"
+    secret_key = "enigma-secret-2"
+    weight = 1
+
+    [[providers]]
+    name = "rustfs-3"
+    provider_type = "S3Compatible"
+    bucket = "enigma-chunks"
+    endpoint_url = "http://rustfs-3.enigma-test.svc.cluster.local:9000"
+    path_style = true
+    access_key = "enigma-key-3"
+    secret_key = "enigma-secret-3"
+    weight = 1
+
+  init-config.sh: |
+    #!/bin/sh
+    set -e
+    # Extract node ID from hostname (enigma-0 → 1, enigma-1 → 2, etc.)
+    ORDINAL=$(echo "$HOSTNAME" | rev | cut -d'-' -f1 | rev)
+    NODE_ID=$((ORDINAL + 1))
+
+    # Copy base config
+    cp /etc/enigma-template/config-template.toml /etc/enigma/config.toml
+
+    # Append Raft config
+    cat >> /etc/enigma/config.toml <<EOF
+
+    [raft]
+    node_id = $NODE_ID
+    data_dir = "/data/raft"
+    grpc_addr = "0.0.0.0:9000"
+    election_timeout_ms = 1000
+    heartbeat_interval_ms = 300
+    snapshot_threshold = 10000
+
+    [[raft.peers]]
+    id = 1
+    addr = "enigma-0.enigma.enigma-test.svc.cluster.local:9000"
+
+    [[raft.peers]]
+    id = 2
+    addr = "enigma-1.enigma.enigma-test.svc.cluster.local:9000"
+
+    [[raft.peers]]
+    id = 3
+    addr = "enigma-2.enigma.enigma-test.svc.cluster.local:9000"
+    EOF
+
+    echo "Node $NODE_ID config generated"
+---
+# StatefulSet: 3 Enigma proxy nodes
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: enigma
+  namespace: enigma-test
+spec:
+  serviceName: enigma
+  replicas: 3
+  selector:
+    matchLabels:
+      app: enigma
+  template:
+    metadata:
+      labels:
+        app: enigma
+    spec:
+      initContainers:
+        - name: init-config
+          image: busybox:1.36
+          command: ["sh", "/etc/enigma-template/init-config.sh"]
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/enigma-template
+            - name: config
+              mountPath: /etc/enigma
+      containers:
+        - name: enigma-proxy
+          image: enigma-proxy:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/enigma/config.toml"]
+          env:
+            - name: ENIGMA_PASSPHRASE
+              value: "dev-passphrase-change-me"
+            - name: RUST_LOG
+              value: "enigma=info"
+          ports:
+            - name: s3
+              containerPort: 8333
+            - name: raft
+              containerPort: 9000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/enigma
+          livenessProbe:
+            tcpSocket:
+              port: 8333
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 8333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config-template
+          configMap:
+            name: enigma-config
+            defaultMode: 0755
+        - name: config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

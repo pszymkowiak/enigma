@@ -1,0 +1,28 @@
+[package]
+name = "enigma-s3"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+enigma-core.workspace = true
+enigma-storage.workspace = true
+enigma-keys.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+s3s.workspace = true
+s3s-aws.workspace = true
+bytes.workspace = true
+md-5.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

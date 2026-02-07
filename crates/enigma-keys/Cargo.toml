@@ -1,0 +1,25 @@
+[package]
+name = "enigma-keys"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+aes-gcm.workspace = true
+argon2.workspace = true
+sha2.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+ml-kem.workspace = true
+hkdf.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

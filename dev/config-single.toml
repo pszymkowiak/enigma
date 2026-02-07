@@ -1,0 +1,15 @@
+# Single-node config for local development (no Raft, local storage)
+[enigma]
+db_path = "/tmp/enigma-dev/enigma.db"
+key_provider = "local"
+keyfile_path = "/tmp/enigma-dev/keys.enc"
+distribution = "RoundRobin"
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8333"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"

@@ -1,0 +1,64 @@
+[enigma]
+db_path = "/data/enigma.db"
+key_provider = "local"
+keyfile_path = "/data/keys.enc"
+distribution = "RoundRobin"
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8333"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"
+
+[raft]
+node_id = 2
+data_dir = "/data/raft"
+grpc_addr = "0.0.0.0:9000"
+election_timeout_ms = 1000
+heartbeat_interval_ms = 300
+snapshot_threshold = 10000
+
+[[raft.peers]]
+id = 1
+addr = "enigma-0:9000"
+
+[[raft.peers]]
+id = 2
+addr = "enigma-1:9000"
+
+[[raft.peers]]
+id = 3
+addr = "enigma-2:9000"
+
+[[providers]]
+name = "rustfs-1"
+provider_type = "S3Compatible"
+bucket = "enigma-chunks"
+endpoint_url = "http://rustfs-1:9000"
+path_style = true
+access_key = "enigma-key-1"
+secret_key = "enigma-secret-1"
+weight = 1
+
+[[providers]]
+name = "rustfs-2"
+provider_type = "S3Compatible"
+bucket = "enigma-chunks"
+endpoint_url = "http://rustfs-2:9000"
+path_style = true
+access_key = "enigma-key-2"
+secret_key = "enigma-secret-2"
+weight = 1
+
+[[providers]]
+name = "rustfs-3"
+provider_type = "S3Compatible"
+bucket = "enigma-chunks"
+endpoint_url = "http://rustfs-3:9000"
+path_style = true
+access_key = "enigma-key-3"
+secret_key = "enigma-secret-3"
+weight = 1
