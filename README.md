@@ -320,18 +320,20 @@ addr = "enigma-2.enigma:9000"
 
 ## Tests
 
-### Unit Tests (49 tests)
+### Unit & Integration Tests (49+ tests)
 
 ```
 cargo test --workspace
 
 enigma-core .......... 36 tests (chunking, crypto, compression, config, credentials, dedup, distributor, manifest, types)
+enigma-core (bench) ..  8 tests (SHA-256, AES-GCM, zstd, CDC, fixed, full pipeline throughput)
 enigma-keys ..........  5 tests (ML-KEM keypair, hybrid derivation, rotation, wrong passphrase)
+enigma-keys (bench) ..  1 test  (Argon2id + ML-KEM-768 key derivation timing)
 enigma-storage .......  4 tests (local + S3 provider tests)
 enigma-keys (vault) ..  4 tests (Azure KV, GCP SM — behind features + real credentials)
 enigma-keys (aws) ....  2 tests (AWS SM — behind feature + real credentials)
                        ──
-                       49+ passed, 0 failed
+                       49+ unit + 9 bench, 0 failures
 ```
 
 ### Vault tests (require real credentials)
@@ -368,6 +370,48 @@ AWS_REGION=us-east-1 \
 | `keys::local` | Create/open keyfile, wrong passphrase, ML-KEM sizes, hybrid key independence, rotation |
 | `keys::vault` | Azure KV, GCP SM, AWS SM — create, get, rotate, list (integration) |
 | `storage::local` | Connection test, upload/download roundtrip, manifest roundtrip |
+
+### Performance (Apple M3 Pro, release build)
+
+```bash
+cargo test --release -p enigma-core --test bench_pipeline -- --nocapture
+cargo test --release -p enigma-keys --test bench_keys -- --nocapture
+```
+
+#### Pipeline Throughput
+
+| Stage | 1 MB | 4 MB | 16 MB |
+|-------|------|------|-------|
+| SHA-256 hashing | 340 MB/s | 318 MB/s | 339 MB/s |
+| AES-256-GCM encrypt | 135 MB/s | 135 MB/s | 137 MB/s |
+| AES-256-GCM decrypt | 137 MB/s | 135 MB/s | 137 MB/s |
+| zstd compress (random) | 4224 MB/s | 2484 MB/s | 1830 MB/s |
+| zstd compress (text) | 6762 MB/s | 6242 MB/s | — |
+
+#### Chunking
+
+| Engine | 4 MB file | 16 MB file | 64 MB file |
+|--------|-----------|------------|------------|
+| CDC (4 MB target) | 271 MB/s | 227 MB/s | 266 MB/s |
+| Fixed (4 MB) | 308 MB/s | 221 MB/s | 310 MB/s |
+
+#### Full Pipeline (Chunk → Hash → Compress → Encrypt)
+
+| Input | Chunks | Throughput |
+|-------|--------|-----------|
+| 4 MB | 1 | 70 MB/s |
+| 16 MB | 2-3 | 66 MB/s |
+| 64 MB | 10-16 | 69 MB/s |
+
+#### Key Derivation (Argon2id + ML-KEM-768 + HKDF)
+
+| Operation | Time |
+|-----------|------|
+| Create (keygen + encrypt) | 17 ms |
+| Open (decrypt + derive) | 15 ms |
+
+> Bottleneck is AES-256-GCM (~135 MB/s). SHA-256 and zstd are much faster.
+> Network I/O to cloud backends is typically the real bottleneck in production.
 
 ### E2E Test
 
