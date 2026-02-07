@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: enigma
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # S3 gateway
+      - containerPort: 30333
+        hostPort: 8333
+        protocol: TCP
+  - role: worker
+  - role: worker

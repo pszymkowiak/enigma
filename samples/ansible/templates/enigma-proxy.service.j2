@@ -1,0 +1,17 @@
+[Unit]
+Description=Enigma S3 Proxy
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/enigma-proxy --config {{ data_dir }}/config.toml
+Environment=ENIGMA_PASSPHRASE={{ enigma_passphrase }}
+Environment=RUST_LOG=enigma=info
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

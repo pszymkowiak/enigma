@@ -1,0 +1,143 @@
+#cloud-config
+
+# Enigma Proxy — Cloud-Init bootstrap
+# Customize ENIGMA_NODE_ID and peer addresses per VM.
+
+write_files:
+  - path: /opt/enigma/config.toml
+    permissions: "0600"
+    content: |
+      [enigma]
+      db_path = "/opt/enigma/enigma.db"
+      key_provider = "local"
+      keyfile_path = "/opt/enigma/keys.enc"
+      distribution = "RoundRobin"
+
+      [enigma.chunk_strategy.Cdc]
+      target_size = 4194304
+
+      [s3_proxy]
+      listen_addr = "0.0.0.0:8333"
+      access_key = "enigma-admin"
+      secret_key = "enigma-secret"
+      default_region = "us-east-1"
+
+      # NOTE: Adjust node_id (1, 2, 3) and peer addresses per VM
+      [raft]
+      node_id = 1
+      data_dir = "/opt/enigma/raft"
+      grpc_addr = "0.0.0.0:9000"
+      election_timeout_ms = 1000
+      heartbeat_interval_ms = 300
+      snapshot_threshold = 10000
+
+      [[raft.peers]]
+      id = 1
+      addr = "enigma-0.internal:9000"
+
+      [[raft.peers]]
+      id = 2
+      addr = "enigma-1.internal:9000"
+
+      [[raft.peers]]
+      id = 3
+      addr = "enigma-2.internal:9000"
+
+      # Local RustFS backend on each node
+      [[providers]]
+      name = "local-rustfs"
+      type = "S3Compatible"
+      bucket = "enigma-chunks"
+      endpoint_url = "http://127.0.0.1:9001"
+      path_style = true
+      access_key = "enigma-storage-key"
+      secret_key = "enigma-storage-secret"
+      weight = 1
+
+  - path: /etc/systemd/system/rustfs.service
+    content: |
+      [Unit]
+      Description=RustFS (S3-compatible storage backend)
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=5
+      ExecStartPre=-/usr/bin/docker rm -f rustfs
+      ExecStart=/usr/bin/docker run --rm --name rustfs \
+        -p 9001:9000 \
+        -v /opt/enigma/rustfs-data:/data \
+        -e RUSTFS_ACCESS_KEY=enigma-storage-key \
+        -e RUSTFS_SECRET_KEY=enigma-storage-secret \
+        rustfs/rustfs:latest /data
+      ExecStop=/usr/bin/docker stop rustfs
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/enigma-proxy.service
+    content: |
+      [Unit]
+      Description=Enigma S3 Proxy
+      After=network-online.target rustfs.service
+      Wants=network-online.target
+      Requires=rustfs.service
+
+      [Service]
+      Type=simple
+      Restart=on-failure
+      RestartSec=5
+      Environment=ENIGMA_PASSPHRASE=change-me-in-production
+      Environment=RUST_LOG=enigma=info
+      ExecStart=/usr/local/bin/enigma-proxy --config /opt/enigma/config.toml
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /opt/enigma/setup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      # Wait for RustFS to be ready
+      echo "Waiting for RustFS..."
+      for i in $(seq 1 60); do
+        if curl -sf http://127.0.0.1:9001/minio/health/live > /dev/null 2>&1; then
+          echo "RustFS is ready"
+          break
+        fi
+        sleep 2
+      done
+
+      # Create bucket
+      export AWS_ACCESS_KEY_ID=enigma-storage-key
+      export AWS_SECRET_ACCESS_KEY=enigma-storage-secret
+      aws --endpoint-url http://127.0.0.1:9001 s3 mb s3://enigma-chunks 2>/dev/null || true
+
+      echo "Enigma setup complete"
+
+packages:
+  - docker.io
+  - awscli
+  - curl
+
+runcmd:
+  - mkdir -p /opt/enigma/raft /opt/enigma/rustfs-data
+  # Pull RustFS image
+  - docker pull rustfs/rustfs:latest
+  # Download Enigma binary (replace with actual release URL)
+  - |
+    ENIGMA_VERSION="0.1.0"
+    curl -fsSL "https://github.com/pszymkowiak/enigma/releases/download/v${ENIGMA_VERSION}/enigma-proxy-linux-amd64" \
+      -o /usr/local/bin/enigma-proxy || echo "WARN: Download failed, build from source"
+    chmod +x /usr/local/bin/enigma-proxy 2>/dev/null || true
+  # Enable and start services
+  - systemctl daemon-reload
+  - systemctl enable --now rustfs.service
+  - sleep 5
+  - /opt/enigma/setup.sh
+  - systemctl enable --now enigma-proxy.service

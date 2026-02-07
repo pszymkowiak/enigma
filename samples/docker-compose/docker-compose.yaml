@@ -1,0 +1,85 @@
+services:
+  # ── RustFS Backends ──────────────────────────────────
+  rustfs-1:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-1
+      RUSTFS_SECRET_KEY: enigma-secret-1
+    ports:
+      - "19001:9000"
+    volumes:
+      - rustfs1-data:/data
+
+  rustfs-2:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-2
+      RUSTFS_SECRET_KEY: enigma-secret-2
+    ports:
+      - "19002:9000"
+    volumes:
+      - rustfs2-data:/data
+
+  rustfs-3:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-3
+      RUSTFS_SECRET_KEY: enigma-secret-3
+    ports:
+      - "19003:9000"
+    volumes:
+      - rustfs3-data:/data
+
+  # ── Enigma Proxy Nodes ──────────────────────────────
+  enigma-0:
+    build: ../..
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase-change-me
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    ports:
+      - "8333:8333"
+      - "9100:9000"
+    volumes:
+      - enigma0-data:/data
+      - ./config-node1.toml:/etc/enigma/config.toml:ro
+
+  enigma-1:
+    build: ../..
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase-change-me
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    ports:
+      - "8334:8333"
+      - "9101:9000"
+    volumes:
+      - enigma1-data:/data
+      - ./config-node2.toml:/etc/enigma/config.toml:ro
+
+  enigma-2:
+    build: ../..
+    depends_on: [rustfs-1, rustfs-2, rustfs-3]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase-change-me
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    ports:
+      - "8335:8333"
+      - "9102:9000"
+    volumes:
+      - enigma2-data:/data
+      - ./config-node3.toml:/etc/enigma/config.toml:ro
+
+volumes:
+  rustfs1-data:
+  rustfs2-data:
+  rustfs3-data:
+  enigma0-data:
+  enigma1-data:
+  enigma2-data:
