@@ -244,4 +244,3 @@ fn bench_full_pipeline() {
         );
     }
 }
-

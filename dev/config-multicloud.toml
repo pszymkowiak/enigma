@@ -1,0 +1,40 @@
+# Multi-cloud config: Azure Storage + GCS + GCP Secret Manager for keys
+[enigma]
+db_path = "/tmp/enigma-multicloud/enigma.db"
+key_provider = "gcp-secretmanager"
+keyfile_path = "/tmp/enigma-multicloud/keys.enc"
+distribution = "RoundRobin"
+gcp_project_id = "<YOUR_GCP_PROJECT_ID>"
+secret_prefix = "enigma-key"
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304
+
+# Azure Blob Storage
+[[providers]]
+name = "azure-westeurope"
+type = "Azure"
+bucket = "enigma-test"
+access_key = "<YOUR_AZURE_STORAGE_ACCOUNT>"
+secret_key = "<YOUR_AZURE_STORAGE_KEY>"
+weight = 1
+
+# Google Cloud Storage
+[[providers]]
+name = "gcs-europe-west1"
+type = "Gcs"
+bucket = "<YOUR_GCS_BUCKET>"
+region = "europe-west1"
+weight = 1
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8333"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"
+
+[web]
+listen_addr = "0.0.0.0:9443"
+admin_user = "admin"
+admin_pass = "enigma"
+jwt_secret = "<YOUR_JWT_SECRET>"

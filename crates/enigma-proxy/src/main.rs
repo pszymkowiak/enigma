@@ -20,6 +20,11 @@ use enigma_s3::service::EnigmaS3Service;
 use enigma_storage::provider::StorageProvider;
 use enigma_storage::s3::S3StorageProvider;
 
+#[cfg(feature = "azure")]
+use enigma_storage::azure::AzureStorageProvider;
+#[cfg(feature = "gcs")]
+use enigma_storage::gcs::GcsStorageProvider;
+
 #[derive(Parser)]
 #[command(name = "enigma-proxy")]
 #[command(about = "Enigma S3-compatible proxy — encrypted, deduplicated, multi-cloud storage")]
@@ -134,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let key_provider = enigma_keys::factory::create_key_provider(
+    let mut key_provider = enigma_keys::factory::create_key_provider(
         &proxy_config.enigma.key_provider,
         passphrase.as_deref().map(|s| s.as_bytes()),
         &proxy_config.enigma.keyfile_path,
@@ -145,7 +150,14 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let managed_key = key_provider.get_current_key().await?;
+    // Try to get existing key; if none exists yet (first run), create one
+    let managed_key = match key_provider.get_current_key().await {
+        Ok(k) => k,
+        Err(_) => {
+            tracing::info!("No key found in provider — creating initial key");
+            key_provider.create_key().await?
+        }
+    };
     let key_material = KeyMaterial {
         id: managed_key.id.clone(),
         key: managed_key.key,
@@ -191,6 +203,26 @@ async fn main() -> anyhow::Result<()> {
                 Path::new(&pc.bucket),
                 &pc.name,
             )?),
+            #[cfg(feature = "azure")]
+            ProviderType::Azure => {
+                let account = pc.access_key.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Azure provider '{}' requires access_key (storage account name)",
+                        pc.name
+                    )
+                })?;
+                let key = pc.secret_key.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Azure provider '{}' requires secret_key (storage account key)",
+                        pc.name
+                    )
+                })?;
+                Box::new(AzureStorageProvider::new(account, key, &pc.bucket, &pc.name)?)
+            }
+            #[cfg(feature = "gcs")]
+            ProviderType::Gcs => {
+                Box::new(GcsStorageProvider::new(&pc.bucket, &pc.name).await?)
+            }
             _ => {
                 anyhow::bail!("Unsupported provider type: {:?}", pc.provider_type);
             }
