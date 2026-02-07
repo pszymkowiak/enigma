@@ -8,6 +8,7 @@ members = [
     "crates/enigma-s3",
     "crates/enigma-raft",
     "crates/enigma-proxy",
+    "crates/enigma-web",
 ]
 
 [workspace.package]
@@ -103,6 +104,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Metrics
 prometheus = "0.13"
 
+# Web UI
+axum = "0.8"
+jsonwebtoken = "9"
+rust-embed = "8"
+mime_guess = "2"
+
 # Raft
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 tonic = "0.12"
@@ -114,3 +121,4 @@ enigma-storage = { path = "crates/enigma-storage" }
 enigma-keys = { path = "crates/enigma-keys" }
 enigma-s3 = { path = "crates/enigma-s3" }
 enigma-raft = { path = "crates/enigma-raft" }
+enigma-web = { path = "crates/enigma-web" }

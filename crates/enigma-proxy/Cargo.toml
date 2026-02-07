@@ -37,10 +37,14 @@ rustls = { workspace = true, optional = true }
 # Metrics (optional)
 prometheus = { workspace = true, optional = true }
 
+# Web UI (optional)
+enigma-web = { workspace = true, optional = true }
+
 [features]
 default = []
 tls = ["dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls"]
 metrics = ["dep:prometheus"]
+web = ["dep:enigma-web"]
 azure-keyvault = ["enigma-keys/azure-keyvault"]
 gcp-secretmanager = ["enigma-keys/gcp-secretmanager"]
 aws-secretsmanager = ["enigma-keys/aws-secretsmanager"]

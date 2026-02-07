@@ -33,7 +33,7 @@ struct Cli {
     passphrase: Option<String>,
 }
 
-/// Extended proxy config that includes S3 proxy + Raft sections.
+/// Extended proxy config that includes S3 proxy + Raft + Web sections.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProxyConfig {
     enigma: enigma_core::config::EnigmaSettings,
@@ -43,6 +43,9 @@ struct ProxyConfig {
     s3_proxy: S3ProxyConfig,
     #[serde(default)]
     raft: Option<enigma_raft::config::RaftConfig>,
+    #[cfg(feature = "web")]
+    #[serde(default)]
+    web: Option<enigma_web::WebConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +288,20 @@ async fn main() -> anyhow::Result<()> {
         let addr: SocketAddr = metrics_addr.parse()?;
         tracing::info!("Starting metrics server on {addr}");
         tokio::spawn(metrics::serve_metrics(addr));
+    }
+
+    // Optionally start web UI server
+    #[cfg(feature = "web")]
+    if let Some(web_config) = proxy_config.web.clone() {
+        let db_path = proxy_config.enigma.db_path.clone();
+        let enigma_settings = proxy_config.enigma.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                enigma_web::start_web_server(web_config, &db_path, enigma_settings).await
+            {
+                tracing::error!("Web UI server error: {e}");
+            }
+        });
     }
 
     // Start HTTP/HTTPS server

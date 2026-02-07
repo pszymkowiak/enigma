@@ -13,3 +13,9 @@ listen_addr = "0.0.0.0:8333"
 access_key = "enigma-admin"
 secret_key = "enigma-secret"
 default_region = "us-east-1"
+
+[web]
+listen_addr = "0.0.0.0:9443"
+admin_user = "admin"
+admin_pass = "enigma"
+jwt_secret = "dev-jwt-secret-change-in-production"
