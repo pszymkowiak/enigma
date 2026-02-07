@@ -27,3 +27,4 @@ gcs = ["dep:google-cloud-storage"]
 
 [dev-dependencies]
 tempfile = "3"
+uuid.workspace = true
