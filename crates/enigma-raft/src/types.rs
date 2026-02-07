@@ -41,6 +41,10 @@ pub enum RaftRequest {
     DecrementChunkRef {
         hash: String,
     },
+    InsertChunkReplicas {
+        chunk_hash: String,
+        replicas: Vec<(i64, String)>,
+    },
 
     // Object-chunk mapping
     InsertObjectChunk {
@@ -85,9 +89,8 @@ pub enum RaftResponse {
     ChunkInserted {
         is_new: bool,
     },
-    ChunkDeleted {
-        provider_id: i64,
-        storage_key: String,
+    ChunksDeleted {
+        deletions: Vec<(i64, String)>,
     },
     Error(String),
 }

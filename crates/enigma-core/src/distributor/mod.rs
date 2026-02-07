@@ -59,6 +59,24 @@ impl Distributor {
         }
     }
 
+    /// Select N distinct providers for chunk replication.
+    /// Returns min(count, providers.len()) providers.
+    pub fn next_providers(&self, count: usize) -> Vec<&ProviderInfo> {
+        let count = count.min(self.providers.len());
+        let mut result = Vec::with_capacity(count);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..self.providers.len() * 2 {
+            if result.len() >= count {
+                break;
+            }
+            let p = self.next_provider();
+            if seen.insert(p.id) {
+                result.push(p);
+            }
+        }
+        result
+    }
+
     /// Get provider by ID.
     pub fn provider_by_id(&self, id: i64) -> Option<&ProviderInfo> {
         self.providers.iter().find(|p| p.id == id)
@@ -146,5 +164,31 @@ mod tests {
         let providers = make_providers(3);
         let dist = Distributor::round_robin(providers);
         assert!(dist.provider_by_id(99).is_none());
+    }
+
+    #[test]
+    fn next_providers_returns_distinct() {
+        let providers = make_providers(5);
+        let dist = Distributor::round_robin(providers);
+
+        let result = dist.next_providers(3);
+        assert_eq!(result.len(), 3);
+
+        // All IDs should be unique
+        let ids: Vec<i64> = result.iter().map(|p| p.id).collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len());
+    }
+
+    #[test]
+    fn next_providers_clamped() {
+        let providers = make_providers(2);
+        let dist = Distributor::round_robin(providers);
+
+        // Requesting 5 providers but only 2 exist
+        let result = dist.next_providers(5);
+        assert_eq!(result.len(), 2);
     }
 }

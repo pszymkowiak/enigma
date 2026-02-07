@@ -44,7 +44,7 @@ pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<Strin
         let chunks = db.get_file_chunks(*file_id)?;
 
         for (chunk_hash, _idx, _offset) in &chunks {
-            let chunk_info = match db.get_chunk_info(chunk_hash)? {
+            let chunk_locations = match db.get_chunk_locations(chunk_hash)? {
                 Some(info) => info,
                 None => {
                     eprintln!("ERROR: chunk {chunk_hash} not found in DB");
@@ -52,22 +52,27 @@ pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<Strin
                     continue;
                 }
             };
-            let (nonce, key_id, provider_id, storage_key, _size, size_compressed) = chunk_info;
+            let (nonce, key_id, locations, _size_enc, size_compressed) = chunk_locations;
 
-            // Download
-            let provider = match storage_providers.get(&provider_id) {
-                Some(p) => p,
-                None => {
-                    eprintln!("ERROR: provider {provider_id} not available");
-                    errors += 1;
-                    continue;
+            // Download with fallback across replicas
+            let mut ciphertext = None;
+            for (pid, skey) in &locations {
+                if let Some(provider) = storage_providers.get(pid) {
+                    match provider.download_chunk(skey).await {
+                        Ok(data) => {
+                            ciphertext = Some(data);
+                            break;
+                        }
+                        Err(e) => {
+                            eprintln!("WARN: provider {pid} failed for chunk {chunk_hash}: {e}, trying next");
+                        }
+                    }
                 }
-            };
-
-            let ciphertext = match provider.download_chunk(&storage_key).await {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("ERROR: chunk {chunk_hash} download failed: {e}");
+            }
+            let ciphertext = match ciphertext {
+                Some(data) => data,
+                None => {
+                    eprintln!("ERROR: all providers failed for chunk {chunk_hash}");
                     errors += 1;
                     continue;
                 }

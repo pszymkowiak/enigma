@@ -123,6 +123,21 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // Ignore "duplicate column name" error for idempotency.
     let _ = conn.execute("ALTER TABLE chunks ADD COLUMN size_compressed INTEGER", []);
 
+    // v3 migration: chunk_replicas table for multi-provider replication.
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS chunk_replicas (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_hash  TEXT NOT NULL REFERENCES chunks(hash) ON DELETE CASCADE,
+            provider_id INTEGER NOT NULL REFERENCES providers(id),
+            storage_key TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(chunk_hash, provider_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chunk_replicas_hash ON chunk_replicas(chunk_hash);
+        ",
+    )?;
+
     Ok(())
 }
 
@@ -155,6 +170,7 @@ mod tests {
         assert!(tables.contains(&"object_chunks".to_string()));
         assert!(tables.contains(&"multipart_uploads".to_string()));
         assert!(tables.contains(&"multipart_parts".to_string()));
+        assert!(tables.contains(&"chunk_replicas".to_string()));
     }
 
     #[test]

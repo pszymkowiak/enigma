@@ -9,6 +9,7 @@ members = [
     "crates/enigma-raft",
     "crates/enigma-proxy",
     "crates/enigma-web",
+    "crates/enigma-auth",
 ]
 
 [workspace.package]
@@ -33,7 +34,8 @@ ml-kem = "0.2"
 hkdf = "0.12"
 
 # Storage
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+tempfile = "3"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -105,7 +107,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 prometheus = "0.13"
 
 # Web UI
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
+tower-http = { version = "0.6", features = ["trace", "limit"] }
 jsonwebtoken = "9"
 rust-embed = "8"
 mime_guess = "2"
@@ -115,6 +118,9 @@ openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 tonic = "0.12"
 prost = "0.13"
 
+# Hex
+hex = "0.4"
+
 # Internal
 enigma-core = { path = "crates/enigma-core" }
 enigma-storage = { path = "crates/enigma-storage" }
@@ -122,3 +128,4 @@ enigma-keys = { path = "crates/enigma-keys" }
 enigma-s3 = { path = "crates/enigma-s3" }
 enigma-raft = { path = "crates/enigma-raft" }
 enigma-web = { path = "crates/enigma-web" }
+enigma-auth = { path = "crates/enigma-auth" }

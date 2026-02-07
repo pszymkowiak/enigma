@@ -1,0 +1,50 @@
+# Test: 1 Enigma node + 2 RustFS backends (simulating 2 clouds)
+# Usage:
+#   docker compose -f docker-compose.2clouds.yaml up --build
+#   # Upload a 4GB file via S3:
+#   aws --endpoint-url http://localhost:8333 s3 mb s3://test-bucket
+#   dd if=/dev/urandom of=/tmp/test-4g.bin bs=1M count=4096
+#   aws --endpoint-url http://localhost:8333 s3 cp /tmp/test-4g.bin s3://test-bucket/bigfile.bin
+
+services:
+  # ── 2 RustFS backends (simulating 2 different clouds) ──
+  rustfs-1:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-1
+      RUSTFS_SECRET_KEY: enigma-secret-1
+    volumes:
+      - rustfs1-data:/data
+    ports:
+      - "19001:9000"
+
+  rustfs-2:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: enigma-key-2
+      RUSTFS_SECRET_KEY: enigma-secret-2
+    volumes:
+      - rustfs2-data:/data
+    ports:
+      - "19002:9000"
+
+  # ── Single Enigma node with replication_factor=2 ──
+  enigma:
+    build: .
+    depends_on: [rustfs-1, rustfs-2]
+    environment:
+      ENIGMA_PASSPHRASE: dev-passphrase
+      RUST_LOG: enigma=info
+    command: ["--config", "/etc/enigma/config.toml"]
+    volumes:
+      - enigma-data:/data
+      - ./dev/config-2clouds.toml:/etc/enigma/config.toml:ro
+    ports:
+      - "8333:8333"
+
+volumes:
+  rustfs1-data:
+  rustfs2-data:
+  enigma-data:

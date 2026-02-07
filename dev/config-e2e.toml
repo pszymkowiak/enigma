@@ -1,0 +1,35 @@
+# E2E config: Azure + GCS, single node, web UI
+[enigma]
+db_path = "/tmp/enigma-e2e/enigma.db"
+key_provider = "local"
+keyfile_path = "/tmp/enigma-e2e/keys.enc"
+distribution = "RoundRobin"
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8333"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"
+
+[web]
+listen_addr = "0.0.0.0:9443"
+admin_user = "admin"
+admin_pass = "enigma"
+jwt_secret = "dev-jwt-secret-e2e"
+
+[[providers]]
+name = "azure-westeurope"
+type = "Azure"
+bucket = "enigma-chunks"
+access_key = "${AZURE_STORAGE_ACCOUNT}"
+secret_key = "${AZURE_STORAGE_KEY}"
+weight = 1
+
+[[providers]]
+name = "gcs-europe-west1"
+type = "Gcs"
+bucket = "enigma-test-storage-pszymkowiak"
+weight = 1

@@ -1,0 +1,29 @@
+[package]
+name = "enigma-auth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+argon2.workspace = true
+sha2.workspace = true
+rand.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+axum.workspace = true
+jsonwebtoken.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+hex = "0.4"
+
+# PostgreSQL (optional)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"], optional = true }
+
+[features]
+default = []
+postgres = ["dep:sqlx"]

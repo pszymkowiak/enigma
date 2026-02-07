@@ -147,9 +147,12 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
             let hash_hex = chunk.hash.to_hex();
             total_chunks += 1;
 
-            // Pick provider
-            let target_provider = distributor.next_provider();
             let storage_key = chunk.hash.storage_key();
+
+            // Pick providers for replication
+            let replication = config.enigma.replication_factor.max(1) as usize;
+            let targets = distributor.next_providers(replication);
+            let primary = targets[0];
 
             // Compress (optional, before encryption)
             let (data_to_encrypt, size_compressed) = if compression.enabled {
@@ -169,7 +172,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
                 &hash_hex,
                 &encrypted.nonce,
                 &key_material.id,
-                target_provider.id,
+                primary.id,
                 &storage_key,
                 chunk.length as u64,
                 encrypted.ciphertext.len() as u64,
@@ -177,11 +180,29 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
             )?;
 
             if is_new {
-                // Upload to storage
-                if let Some(provider) = storage_providers.get(&target_provider.id) {
-                    provider
-                        .upload_chunk(&storage_key, &encrypted.ciphertext)
-                        .await?;
+                // Upload to all target providers
+                for target in &targets {
+                    if let Some(provider) = storage_providers.get(&target.id) {
+                        match provider
+                            .upload_chunk(&storage_key, &encrypted.ciphertext)
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(e) if target.id == primary.id => return Err(e.into()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Replica upload to provider {} failed: {e}",
+                                    target.id
+                                );
+                            }
+                        }
+                    }
+                }
+                // Record replicas
+                if targets.len() > 1 {
+                    let replicas: Vec<(i64, &str)> =
+                        targets.iter().map(|t| (t.id, storage_key.as_str())).collect();
+                    db.insert_chunk_replicas(&hash_hex, &replicas)?;
                 }
             } else {
                 dedup_chunks += 1;

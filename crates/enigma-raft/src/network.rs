@@ -23,6 +23,14 @@ impl EnigmaNetworkFactory {
             peers: Arc::new(Mutex::new(peers)),
         }
     }
+
+    pub fn add_peer(&self, id: u64, addr: String) {
+        self.peers.lock().unwrap().insert(id, addr);
+    }
+
+    pub fn remove_peer(&self, id: u64) {
+        self.peers.lock().unwrap().remove(&id);
+    }
 }
 
 impl RaftNetworkFactory<TypeConfig> for EnigmaNetworkFactory {
@@ -85,10 +93,11 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
         InstallSnapshotResponse<u64>,
         RPCError<u64, BasicNode, RaftError<u64, openraft::error::InstallSnapshotError>>,
     > {
+        // openraft v0.9 uses full_snapshot() instead of this legacy method
         Err(RPCError::Unreachable(Unreachable::new(
             &std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "Snapshot transfer not yet implemented",
+                "Use full_snapshot() instead",
             ),
         )))
     }
@@ -113,8 +122,8 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
 
     async fn full_snapshot(
         &mut self,
-        _vote: Vote<u64>,
-        _snapshot: Snapshot<TypeConfig>,
+        vote: Vote<u64>,
+        snapshot: Snapshot<TypeConfig>,
         _cancel: impl std::future::Future<Output = openraft::error::ReplicationClosed>
         + openraft::OptionalSend
         + 'static,
@@ -123,11 +132,43 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
         SnapshotResponse<u64>,
         openraft::error::StreamingError<TypeConfig, openraft::error::Fatal<u64>>,
     > {
-        Err(openraft::error::StreamingError::Unreachable(
-            Unreachable::new(&std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Snapshot transfer not yet implemented",
+        // Serialize metadata (vote + snapshot meta) as JSON
+        let meta_json = serde_json::to_vec(&(&vote, &snapshot.meta)).map_err(|e| {
+            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
+        })?;
+
+        let db_bytes = snapshot.snapshot.into_inner();
+
+        // Build payload: [8 bytes meta_len LE][meta JSON][DB bytes]
+        let meta_len = meta_json.len() as u64;
+        let mut payload = Vec::with_capacity(8 + meta_json.len() + db_bytes.len());
+        payload.extend_from_slice(&meta_len.to_le_bytes());
+        payload.extend_from_slice(&meta_json);
+        payload.extend_from_slice(&db_bytes);
+
+        // Split into 1MB chunks for streaming
+        let chunks: Vec<crate::proto::SnapshotChunk> = payload
+            .chunks(1_048_576)
+            .map(|c| crate::proto::SnapshotChunk {
+                data: c.to_vec(),
+            })
+            .collect();
+
+        let mut client = self.client().await.map_err(|e| match e {
+            RPCError::Unreachable(u) => openraft::error::StreamingError::Unreachable(u),
+            _ => openraft::error::StreamingError::Unreachable(Unreachable::new(
+                &std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")),
             )),
-        ))
+        })?;
+
+        let stream = futures::stream::iter(chunks);
+        let resp = client.install_snapshot(stream).await.map_err(|e| {
+            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
+        })?;
+
+        let data = resp.into_inner().data;
+        serde_json::from_slice(&data).map_err(|e| {
+            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
+        })
     }
 }

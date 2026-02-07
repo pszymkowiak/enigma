@@ -32,6 +32,9 @@ pub struct EnigmaSettings {
     /// Compression settings.
     #[serde(default)]
     pub compression: CompressionConfig,
+    /// Number of providers each chunk is replicated to (default: 1 = no replication).
+    #[serde(default = "default_replication_factor")]
+    pub replication_factor: u32,
     /// Azure Key Vault URL (for key_provider = "azure-keyvault").
     #[serde(default)]
     pub vault_url: Option<String>,
@@ -59,6 +62,10 @@ impl Default for CompressionConfig {
             level: 3,
         }
     }
+}
+
+fn default_replication_factor() -> u32 {
+    1
 }
 
 fn default_key_provider() -> String {
@@ -131,6 +138,7 @@ impl EnigmaConfig {
                 key_provider: "local".to_string(),
                 keyfile_path: base_dir.join("keys.enc").display().to_string(),
                 compression: CompressionConfig::default(),
+                replication_factor: 1,
                 vault_url: None,
                 gcp_project_id: None,
                 aws_region: None,
@@ -173,5 +181,23 @@ mod tests {
     fn load_nonexistent_returns_error() {
         let result = EnigmaConfig::load(Path::new("/nonexistent/enigma.toml"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn roundtrip_with_replication_factor() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("enigma.toml");
+        let mut config = EnigmaConfig::default_config(tmp.path());
+        config.enigma.replication_factor = 3;
+        config.save(&path).unwrap();
+        let loaded = EnigmaConfig::load(&path).unwrap();
+        assert_eq!(loaded.enigma.replication_factor, 3);
+    }
+
+    #[test]
+    fn default_replication_factor_is_one() {
+        let tmp = TempDir::new().unwrap();
+        let config = EnigmaConfig::default_config(tmp.path());
+        assert_eq!(config.enigma.replication_factor, 1);
     }
 }

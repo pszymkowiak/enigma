@@ -1,0 +1,38 @@
+# Test config: 2 clouds, replication_factor=2, single node (no Raft)
+# Each chunk is replicated to BOTH providers.
+
+[enigma]
+db_path = "/data/enigma.db"
+key_provider = "local"
+keyfile_path = "/data/keys.enc"
+distribution = "RoundRobin"
+replication_factor = 2
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304   # 4 MB chunks
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8333"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"
+
+[[providers]]
+name = "cloud-1"
+provider_type = "S3Compatible"
+bucket = "enigma-chunks"
+endpoint_url = "http://rustfs-1:9000"
+path_style = true
+access_key = "enigma-key-1"
+secret_key = "enigma-secret-1"
+weight = 1
+
+[[providers]]
+name = "cloud-2"
+provider_type = "S3Compatible"
+bucket = "enigma-chunks"
+endpoint_url = "http://rustfs-2:9000"
+path_style = true
+access_key = "enigma-key-2"
+secret_key = "enigma-secret-2"
+weight = 1

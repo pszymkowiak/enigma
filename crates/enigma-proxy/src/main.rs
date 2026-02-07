@@ -1,7 +1,7 @@
 #[cfg(feature = "metrics")]
 mod metrics;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -24,6 +24,84 @@ use enigma_storage::s3::S3StorageProvider;
 use enigma_storage::azure::AzureStorageProvider;
 #[cfg(feature = "gcs")]
 use enigma_storage::gcs::GcsStorageProvider;
+
+// ── RaftClusterHandle ────────────────────────────────────────────
+
+#[cfg(feature = "web")]
+struct RaftClusterHandle {
+    raft: Arc<enigma_raft::EnigmaRaft>,
+    node_id: u64,
+    peers: Arc<Mutex<HashMap<u64, String>>>,
+}
+
+#[cfg(feature = "web")]
+#[async_trait::async_trait]
+impl enigma_web::cluster_handle::ClusterHandle for RaftClusterHandle {
+    async fn metrics(&self) -> serde_json::Value {
+        let m = self.raft.metrics().borrow().clone();
+        let peers: Vec<serde_json::Value> = {
+            let p = self.peers.lock().unwrap();
+            p.iter()
+                .map(|(id, addr)| serde_json::json!({ "id": id, "addr": addr }))
+                .collect()
+        };
+
+        serde_json::json!({
+            "mode": "raft",
+            "node_id": self.node_id,
+            "state": format!("{:?}", m.state),
+            "current_leader": m.current_leader,
+            "current_term": m.current_term,
+            "last_applied": m.last_applied.map(|l| l.index),
+            "last_log_index": m.last_log_index,
+            "snapshot_index": m.snapshot.map(|l| l.index),
+            "membership": format!("{:?}", m.membership_config),
+            "peers": peers,
+        })
+    }
+
+    async fn add_node(&self, node_id: u64, addr: String) -> anyhow::Result<()> {
+        // Add as learner first
+        self.raft
+            .add_learner(node_id, openraft::BasicNode { addr: addr.clone() }, true)
+            .await?;
+
+        // Then promote to voter — get current voter IDs and add the new node
+        let m = self.raft.metrics().borrow().clone();
+        let mut voter_ids: BTreeSet<u64> = m
+            .membership_config
+            .membership()
+            .voter_ids()
+            .collect();
+        voter_ids.insert(node_id);
+        self.raft.change_membership(voter_ids, false).await?;
+
+        // Update peer map
+        self.peers.lock().unwrap().insert(node_id, addr);
+        Ok(())
+    }
+
+    async fn remove_node(&self, node_id: u64) -> anyhow::Result<()> {
+        // Get current voter IDs and remove the node
+        let m = self.raft.metrics().borrow().clone();
+        let voter_ids: BTreeSet<u64> = m
+            .membership_config
+            .membership()
+            .voter_ids()
+            .filter(|id| *id != node_id)
+            .collect();
+        self.raft.change_membership(voter_ids, false).await?;
+
+        // Update peer map
+        self.peers.lock().unwrap().remove(&node_id);
+        Ok(())
+    }
+
+    async fn trigger_snapshot(&self) -> anyhow::Result<()> {
+        self.raft.trigger().snapshot().await?;
+        Ok(())
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "enigma-proxy")]
@@ -130,8 +208,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Loading configuration from {}", cli.config.display());
 
-    // Open manifest DB
+    // Open manifest DB (shared between S3 state and Raft state machine)
     let db = ManifestDb::open(Path::new(&proxy_config.enigma.db_path))?;
+    let shared_db = Arc::new(Mutex::new(db));
 
     // Get encryption key via factory
     let passphrase = if proxy_config.enigma.key_provider == "local" {
@@ -167,10 +246,10 @@ async fn main() -> anyhow::Result<()> {
     let mut storage_providers: HashMap<i64, Box<dyn StorageProvider>> = HashMap::new();
 
     for pc in &proxy_config.providers {
-        let existing = db.list_providers()?;
+        let existing = shared_db.lock().unwrap().list_providers()?;
         let pid = match existing.iter().find(|p| p.name == pc.name) {
             Some(p) => p.id,
-            None => db.insert_provider(
+            None => shared_db.lock().unwrap().insert_provider(
                 &pc.name,
                 pc.provider_type,
                 &pc.bucket,
@@ -234,32 +313,53 @@ async fn main() -> anyhow::Result<()> {
         storage_providers.insert(pid, provider);
     }
 
-    let provider_infos = db.list_providers()?;
+    let provider_infos = shared_db.lock().unwrap().list_providers()?;
 
-    // If no providers configured, create a local fallback
-    if provider_infos.is_empty() {
-        let local_path = Path::new(&proxy_config.enigma.db_path)
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("storage");
-        std::fs::create_dir_all(&local_path)?;
-        let pid = db.insert_provider(
-            "local-default",
-            ProviderType::Local,
-            local_path.to_str().unwrap_or(""),
-            None,
-            1,
-        )?;
-        let provider =
-            enigma_storage::local::LocalStorageProvider::new(&local_path, "local-default")?;
-        storage_providers.insert(pid, Box::new(provider));
-        tracing::info!(
-            "No providers configured, using local fallback at {}",
-            local_path.display()
-        );
+    // If no providers are loaded, re-create them from DB entries or create a local fallback
+    if storage_providers.is_empty() {
+        if provider_infos.is_empty() {
+            // First run: no providers in DB — create a local fallback
+            let local_path = Path::new(&proxy_config.enigma.db_path)
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("storage");
+            std::fs::create_dir_all(&local_path)?;
+            let pid = shared_db.lock().unwrap().insert_provider(
+                "local-default",
+                ProviderType::Local,
+                local_path.to_str().unwrap_or(""),
+                None,
+                1,
+            )?;
+            let provider =
+                enigma_storage::local::LocalStorageProvider::new(&local_path, "local-default")?;
+            storage_providers.insert(pid, Box::new(provider));
+            tracing::info!(
+                "No providers configured, using local fallback at {}",
+                local_path.display()
+            );
+        } else {
+            // Restart: providers exist in DB but weren't loaded from config — re-open local ones
+            for pi in &provider_infos {
+                if pi.provider_type == ProviderType::Local {
+                    let provider = enigma_storage::local::LocalStorageProvider::new(
+                        Path::new(&pi.bucket),
+                        &pi.name,
+                    )?;
+                    storage_providers.insert(pi.id, Box::new(provider));
+                    tracing::info!("Re-opened local provider '{}' at {}", pi.name, pi.bucket);
+                } else {
+                    tracing::warn!(
+                        "Provider '{}' ({:?}) exists in DB but is not configured — skipping",
+                        pi.name,
+                        pi.provider_type
+                    );
+                }
+            }
+        }
     }
 
-    let provider_infos = db.list_providers()?;
+    let provider_infos = shared_db.lock().unwrap().list_providers()?;
 
     // Setup distributor
     let distributor = match proxy_config.enigma.distribution {
@@ -275,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create shared state
     let state = Arc::new(EnigmaS3State {
-        db: Mutex::new(db),
+        db: shared_db.clone(),
         providers: storage_providers,
         distributor,
         key_material,
@@ -283,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Build S3 service
-    let s3_service = EnigmaS3Service::new(state);
+    let s3_service = EnigmaS3Service::new(state.clone());
 
     let mut s3_builder = S3ServiceBuilder::new(s3_service);
 
@@ -296,24 +396,6 @@ async fn main() -> anyhow::Result<()> {
 
     let s3_service = s3_builder.build();
 
-    // Optionally start Raft gRPC server
-    if let Some(raft_config) = &proxy_config.raft {
-        if !raft_config.is_single_node() {
-            tracing::info!(
-                "Raft mode: node_id={}, peers={}",
-                raft_config.node_id,
-                raft_config.peers.len()
-            );
-            // Raft startup would go here in a full implementation
-            // For now, we operate in single-node mode
-            tracing::warn!("Multi-node Raft not yet fully wired — running as single node");
-        } else {
-            tracing::info!("Single-node mode (Raft disabled)");
-        }
-    } else {
-        tracing::info!("No Raft config — running as single node");
-    }
-
     // Optionally start Prometheus metrics server
     #[cfg(feature = "metrics")]
     if let Some(ref metrics_addr) = proxy_config.s3_proxy.metrics_addr {
@@ -322,21 +404,234 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(metrics::serve_metrics(addr));
     }
 
-    // Optionally start web UI server
-    #[cfg(feature = "web")]
-    if let Some(web_config) = proxy_config.web.clone() {
-        let db_path = proxy_config.enigma.db_path.clone();
-        let enigma_settings = proxy_config.enigma.clone();
+    // Determine if we're in multi-node Raft mode
+    let is_multi_node = proxy_config
+        .raft
+        .as_ref()
+        .is_some_and(|rc| !rc.is_single_node());
+
+    if is_multi_node {
+        let raft_config = proxy_config.raft.as_ref().unwrap();
+        let node_id = raft_config.node_id;
+
+        // ── Recovery mode ────────────────────────────────────
+        if raft_config.force_new_cluster {
+            tracing::warn!("RECOVERY MODE: wiping Raft log to bootstrap as single node");
+            let log_path = format!("{}/raft-log.db", raft_config.data_dir);
+            for ext in ["", "-wal", "-shm"] {
+                let p = format!("{log_path}{ext}");
+                if Path::new(&p).exists() {
+                    std::fs::remove_file(&p)?;
+                    tracing::info!("Removed {p}");
+                }
+            }
+        }
+
+        // Use only self when in recovery mode
+        let effective_peers: Vec<enigma_raft::config::PeerConfig> =
+            if raft_config.force_new_cluster {
+                vec![enigma_raft::config::PeerConfig {
+                    id: node_id,
+                    addr: raft_config.grpc_addr.clone(),
+                }]
+            } else {
+                raft_config.peers.clone()
+            };
+
+        tracing::info!(
+            "Raft mode: node_id={}, peers={}{}",
+            node_id,
+            effective_peers.len(),
+            if raft_config.force_new_cluster {
+                " (RECOVERY)"
+            } else {
+                ""
+            }
+        );
+
+        // Build peer address map
+        let peer_map: HashMap<u64, String> = effective_peers
+            .iter()
+            .map(|p| (p.id, p.addr.clone()))
+            .collect();
+
+        // Create Raft components
+        let log_store_path = format!("{}/raft-log.db", raft_config.data_dir);
+        tracing::info!("Opening Raft log store at {log_store_path}");
+        let log_store = enigma_raft::log_store::SqliteLogStore::new(&log_store_path)?;
+        tracing::info!("Log store opened, creating state machine");
+        let state_machine = enigma_raft::state_machine::EnigmaStateMachine::new(
+            shared_db.clone(),
+            proxy_config.enigma.db_path.clone(),
+        );
+        let network = enigma_raft::network::EnigmaNetworkFactory::new(peer_map.clone());
+        let shared_peers = network.peers.clone();
+        tracing::info!("Creating Raft engine...");
+
+        // Build openraft Config
+        let raft_openraft_config = openraft::Config {
+            election_timeout_min: raft_config.election_timeout_ms,
+            election_timeout_max: raft_config.election_timeout_ms * 2,
+            heartbeat_interval: raft_config.heartbeat_interval_ms,
+            snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(
+                raft_config.snapshot_threshold,
+            ),
+            ..Default::default()
+        };
+        let raft_openraft_config = Arc::new(raft_openraft_config.validate()?);
+
+        // Create Raft engine
+        let raft = openraft::Raft::<enigma_raft::TypeConfig>::new(
+            node_id,
+            raft_openraft_config,
+            network,
+            log_store,
+            state_machine,
+        )
+        .await?;
+        tracing::info!("Raft engine created successfully");
+        let raft = Arc::new(raft);
+
+        // Start gRPC server for inter-node communication
+        let grpc_addr: SocketAddr = raft_config.grpc_addr.parse()?;
+        let grpc_server = enigma_raft::grpc_server::EnigmaRaftGrpcServer::new(raft.clone());
+        let grpc_svc =
+            enigma_raft::proto::raft_service_server::RaftServiceServer::new(grpc_server);
+
+        tracing::info!("Starting Raft gRPC server on {grpc_addr}");
         tokio::spawn(async move {
-            if let Err(e) =
-                enigma_web::start_web_server(web_config, &db_path, enigma_settings).await
+            if let Err(e) = tonic::transport::Server::builder()
+                .add_service(grpc_svc)
+                .serve(grpc_addr)
+                .await
             {
-                tracing::error!("Web UI server error: {e}");
+                tracing::error!("Raft gRPC server error: {e}");
             }
         });
+
+        // Bootstrap cluster from the node with the smallest ID
+        let min_peer_id = effective_peers.iter().map(|p| p.id).min().unwrap_or(1);
+        if node_id == min_peer_id {
+            let mut members = BTreeMap::new();
+            for peer in &effective_peers {
+                members.insert(
+                    peer.id,
+                    openraft::BasicNode {
+                        addr: peer.addr.clone(),
+                    },
+                );
+            }
+            match raft.initialize(members).await {
+                Ok(_) => tracing::info!("Raft cluster initialized from node {node_id}"),
+                Err(e) => {
+                    // Ignore if already initialized
+                    tracing::debug!("Raft initialize returned (already done?): {e}");
+                }
+            }
+        }
+
+        // Build cluster handle for web UI
+        #[cfg(feature = "web")]
+        let cluster_handle: Option<Arc<dyn enigma_web::cluster_handle::ClusterHandle>> = Some(
+            Arc::new(RaftClusterHandle {
+                raft: raft.clone(),
+                node_id,
+                peers: shared_peers,
+            }),
+        );
+
+        // Spawn leadership watch — start/stop web UI based on leadership
+        #[cfg(feature = "web")]
+        {
+            let web_config = proxy_config.web.clone();
+            let db_path = proxy_config.enigma.db_path.clone();
+            let enigma_settings = proxy_config.enigma.clone();
+            let s3_state_for_web = state.clone();
+            let cluster_handle_for_web = cluster_handle.clone();
+            let mut metrics_rx = raft.metrics();
+
+            tokio::spawn(async move {
+                let mut web_handle: Option<(
+                    tokio::task::JoinHandle<()>,
+                    tokio::sync::oneshot::Sender<()>,
+                )> = None;
+
+                loop {
+                    let is_leader = {
+                        let m = metrics_rx.borrow();
+                        m.state == openraft::ServerState::Leader
+                    };
+
+                    if let Some(ref wc) = web_config {
+                        if is_leader && web_handle.is_none() {
+                            tracing::info!("Leader — starting web UI");
+                            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+                            let wc = wc.clone();
+                            let db_path = db_path.clone();
+                            let enigma_settings = enigma_settings.clone();
+                            let s3_state = Some(s3_state_for_web.clone());
+                            let cluster = cluster_handle_for_web.clone();
+                            let handle = tokio::spawn(async move {
+                                if let Err(e) = enigma_web::start_web_server(
+                                    wc,
+                                    &db_path,
+                                    enigma_settings,
+                                    s3_state,
+                                    Some(shutdown_rx),
+                                    cluster,
+                                )
+                                .await
+                                {
+                                    tracing::error!("Web UI server error: {e}");
+                                }
+                            });
+                            web_handle = Some((handle, shutdown_tx));
+                        } else if !is_leader && web_handle.is_some() {
+                            tracing::info!("Lost leadership — stopping web UI");
+                            let (handle, tx) = web_handle.take().unwrap();
+                            let _ = tx.send(());
+                            let _ = handle.await;
+                        }
+                    }
+
+                    if metrics_rx.changed().await.is_err() {
+                        tracing::warn!("Raft metrics channel closed — exiting leadership watch");
+                        break;
+                    }
+                }
+            });
+        }
+    } else {
+        // Single-node mode: no Raft, start web UI directly
+        if proxy_config.raft.is_some() {
+            tracing::info!("Single-node mode (Raft disabled)");
+        } else {
+            tracing::info!("No Raft config — running as single node");
+        }
+
+        #[cfg(feature = "web")]
+        if let Some(web_config) = proxy_config.web.clone() {
+            let db_path = proxy_config.enigma.db_path.clone();
+            let enigma_settings = proxy_config.enigma.clone();
+            let s3_state_for_web = Some(state.clone());
+            tokio::spawn(async move {
+                if let Err(e) = enigma_web::start_web_server(
+                    web_config,
+                    &db_path,
+                    enigma_settings,
+                    s3_state_for_web,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::error!("Web UI server error: {e}");
+                }
+            });
+        }
     }
 
-    // Start HTTP/HTTPS server
+    // Start HTTP/HTTPS server (runs in all modes: single-node and multi-node)
     let addr: SocketAddr = proxy_config.s3_proxy.listen_addr.parse()?;
     tracing::info!("Starting Enigma S3 proxy on {addr}");
     tracing::info!("  Access key: {}", proxy_config.s3_proxy.access_key);

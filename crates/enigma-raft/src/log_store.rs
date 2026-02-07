@@ -8,6 +8,7 @@ use crate::TypeConfig;
 /// SQLite-backed Raft log storage.
 pub struct SqliteLogStore {
     conn: Mutex<rusqlite::Connection>,
+    path: Option<String>,
 }
 
 impl SqliteLogStore {
@@ -38,6 +39,7 @@ impl SqliteLogStore {
         )?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: Some(path.to_string()),
         })
     }
 
@@ -60,6 +62,7 @@ impl SqliteLogStore {
         )?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: None,
         })
     }
 
@@ -110,6 +113,7 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
             last.map(|(index, term)| LogId::new(openraft::CommittedLeaderId::new(term, 0), index));
 
         // Get last purged (stored in raft_state)
+        drop(conn);
         let last_purged = self
             .get_state_value("last_purged")?
             .and_then(|v| serde_json::from_str(&v).ok());
@@ -121,9 +125,24 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
     }
 
     async fn get_log_reader(&mut self) -> Self::LogReader {
-        // Create a new in-memory copy for reading; simplified approach
-        // In production, we'd use a shared connection or read-only connection
-        unreachable!("Log reader should not be called directly in this implementation")
+        // Open a separate read-only connection to the same DB
+        match &self.path {
+            Some(path) => {
+                let conn = rusqlite::Connection::open_with_flags(
+                    path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                )
+                .expect("Failed to open log reader connection");
+                Self {
+                    conn: Mutex::new(conn),
+                    path: Some(path.clone()),
+                }
+            }
+            None => {
+                // In-memory: can't share, create a new empty one (shouldn't be used in practice)
+                Self::in_memory().expect("Failed to create in-memory log reader")
+            }
+        }
     }
 
     async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {

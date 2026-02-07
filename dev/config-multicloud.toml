@@ -4,7 +4,7 @@ db_path = "/tmp/enigma-multicloud/enigma.db"
 key_provider = "gcp-secretmanager"
 keyfile_path = "/tmp/enigma-multicloud/keys.enc"
 distribution = "RoundRobin"
-gcp_project_id = "<YOUR_GCP_PROJECT_ID>"
+gcp_project_id = "eastern-rider-263712"
 secret_prefix = "enigma-key"
 
 [enigma.chunk_strategy.Cdc]
@@ -15,15 +15,15 @@ target_size = 4194304
 name = "azure-westeurope"
 type = "Azure"
 bucket = "enigma-test"
-access_key = "<YOUR_AZURE_STORAGE_ACCOUNT>"
-secret_key = "<YOUR_AZURE_STORAGE_KEY>"
+access_key = "${AZURE_STORAGE_ACCOUNT}"
+secret_key = "${AZURE_STORAGE_KEY}"
 weight = 1
 
 # Google Cloud Storage
 [[providers]]
 name = "gcs-europe-west1"
 type = "Gcs"
-bucket = "<YOUR_GCS_BUCKET>"
+bucket = "enigma-test-storage-pszymkowiak"
 region = "europe-west1"
 weight = 1
 
@@ -37,4 +37,4 @@ default_region = "us-east-1"
 listen_addr = "0.0.0.0:9443"
 admin_user = "admin"
 admin_pass = "enigma"
-jwt_secret = "<YOUR_JWT_SECRET>"
+jwt_secret = "multicloud-test-jwt-secret"

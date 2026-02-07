@@ -1,0 +1,41 @@
+# Node 3 — local 3-node cluster dev
+[enigma]
+db_path = "/tmp/enigma-dev-3/enigma.db"
+key_provider = "local"
+keyfile_path = "/tmp/enigma-dev-3/keys.enc"
+distribution = "RoundRobin"
+
+[enigma.chunk_strategy.Cdc]
+target_size = 4194304
+
+[s3_proxy]
+listen_addr = "0.0.0.0:8335"
+access_key = "enigma-admin"
+secret_key = "enigma-secret"
+default_region = "us-east-1"
+
+[raft]
+node_id = 3
+data_dir = "/tmp/enigma-dev-3/raft"
+grpc_addr = "0.0.0.0:9002"
+election_timeout_ms = 1000
+heartbeat_interval_ms = 300
+snapshot_threshold = 10000
+
+[[raft.peers]]
+id = 1
+addr = "127.0.0.1:9000"
+
+[[raft.peers]]
+id = 2
+addr = "127.0.0.1:9001"
+
+[[raft.peers]]
+id = 3
+addr = "127.0.0.1:9002"
+
+[web]
+listen_addr = "0.0.0.0:9445"
+admin_user = "admin"
+admin_pass = "enigma"
+jwt_secret = "dev-jwt-secret-node3"

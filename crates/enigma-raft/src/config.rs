@@ -21,6 +21,10 @@ pub struct RaftConfig {
     /// Number of log entries before triggering a snapshot.
     #[serde(default = "default_snapshot_threshold")]
     pub snapshot_threshold: u64,
+    /// Recovery mode: wipe Raft log and bootstrap as single node.
+    /// Data in ManifestDb is preserved. Use this when quorum is lost.
+    #[serde(default)]
+    pub force_new_cluster: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use openraft::storage::RaftStateMachine;
@@ -6,6 +7,7 @@ use openraft::{
     BasicNode, Entry, EntryPayload, LogId, OptionalSend, Snapshot, SnapshotMeta, StorageError,
     StoredMembership,
 };
+use openraft::storage::SnapshotSignature;
 
 use enigma_core::manifest::ManifestDb;
 
@@ -15,16 +17,28 @@ use crate::types::{RaftRequest, RaftResponse};
 /// Enigma Raft state machine wrapping ManifestDb.
 pub struct EnigmaStateMachine {
     pub db: Arc<Mutex<ManifestDb>>,
-    last_applied: Mutex<Option<LogId<u64>>>,
-    last_membership: Mutex<StoredMembership<u64, BasicNode>>,
+    last_applied: Arc<Mutex<Option<LogId<u64>>>>,
+    last_membership: Arc<Mutex<StoredMembership<u64, BasicNode>>>,
+    cached_snapshot: Arc<Mutex<Option<Snapshot<TypeConfig>>>>,
+    db_path: String,
+}
+
+/// Snapshot builder — holds shared refs to the same state as the state machine.
+pub struct EnigmaSnapshotBuilder {
+    db: Arc<Mutex<ManifestDb>>,
+    last_applied: Arc<Mutex<Option<LogId<u64>>>>,
+    last_membership: Arc<Mutex<StoredMembership<u64, BasicNode>>>,
+    cached_snapshot: Arc<Mutex<Option<Snapshot<TypeConfig>>>>,
 }
 
 impl EnigmaStateMachine {
-    pub fn new(db: Arc<Mutex<ManifestDb>>) -> Self {
+    pub fn new(db: Arc<Mutex<ManifestDb>>, db_path: String) -> Self {
         Self {
             db,
-            last_applied: Mutex::new(None),
-            last_membership: Mutex::new(StoredMembership::default()),
+            last_applied: Arc::new(Mutex::new(None)),
+            last_membership: Arc::new(Mutex::new(StoredMembership::default())),
+            cached_snapshot: Arc::new(Mutex::new(None)),
+            db_path,
         }
     }
 
@@ -78,14 +92,11 @@ impl EnigmaStateMachine {
                     Err(e) => return RaftResponse::Error(e.to_string()),
                 };
                 match db.delete_object_by_ns_key(ns_id, key) {
-                    Ok(to_delete) => {
-                        if let Some((pid, sk)) = to_delete.into_iter().next() {
-                            RaftResponse::ChunkDeleted {
-                                provider_id: pid,
-                                storage_key: sk,
-                            }
-                        } else {
+                    Ok(deletions) => {
+                        if deletions.is_empty() {
                             RaftResponse::Ok
+                        } else {
+                            RaftResponse::ChunksDeleted { deletions }
                         }
                     }
                     Err(e) => RaftResponse::Error(e.to_string()),
@@ -114,13 +125,21 @@ impl EnigmaStateMachine {
                 Err(e) => RaftResponse::Error(e.to_string()),
             },
             RaftRequest::DecrementChunkRef { hash } => match db.decrement_chunk_ref(hash) {
-                Ok(Some((pid, sk))) => RaftResponse::ChunkDeleted {
-                    provider_id: pid,
-                    storage_key: sk,
-                },
-                Ok(None) => RaftResponse::Ok,
+                Ok(deletions) if deletions.is_empty() => RaftResponse::Ok,
+                Ok(deletions) => RaftResponse::ChunksDeleted { deletions },
                 Err(e) => RaftResponse::Error(e.to_string()),
             },
+            RaftRequest::InsertChunkReplicas {
+                chunk_hash,
+                replicas,
+            } => {
+                let refs: Vec<(i64, &str)> =
+                    replicas.iter().map(|(id, sk)| (*id, sk.as_str())).collect();
+                match db.insert_chunk_replicas(&chunk_hash, &refs) {
+                    Ok(()) => RaftResponse::Ok,
+                    Err(e) => RaftResponse::Error(e.to_string()),
+                }
+            }
             RaftRequest::InsertObjectChunk {
                 object_id,
                 chunk_hash,
@@ -173,7 +192,7 @@ impl EnigmaStateMachine {
 }
 
 impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
-    type SnapshotBuilder = Self;
+    type SnapshotBuilder = EnigmaSnapshotBuilder;
 
     async fn applied_state(
         &mut self,
@@ -213,7 +232,12 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        unreachable!("Snapshot builder not used in this simplified implementation")
+        EnigmaSnapshotBuilder {
+            db: self.db.clone(),
+            last_applied: self.last_applied.clone(),
+            last_membership: self.last_membership.clone(),
+            cached_snapshot: self.cached_snapshot.clone(),
+        }
     }
 
     async fn begin_receiving_snapshot(
@@ -224,31 +248,106 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
 
     async fn install_snapshot(
         &mut self,
-        _meta: &SnapshotMeta<u64, BasicNode>,
-        _snapshot: Box<Cursor<Vec<u8>>>,
+        meta: &SnapshotMeta<u64, BasicNode>,
+        snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<u64>> {
+        let bytes = snapshot.into_inner();
+
+        tracing::info!(
+            snapshot_id = %meta.snapshot_id,
+            last_log_id = ?meta.last_log_id,
+            bytes = bytes.len(),
+            "Installing snapshot — restoring ManifestDb"
+        );
+
+        let new_db = ManifestDb::restore_from_bytes(&bytes, Path::new(&self.db_path))
+            .map_err(|e| {
+                let io_err = std::io::Error::new(std::io::ErrorKind::Other, e.to_string());
+                StorageError::from_io_error(
+                    openraft::ErrorSubject::Snapshot(Some(SnapshotSignature {
+                        last_log_id: meta.last_log_id,
+                        last_membership_log_id: (*meta.last_membership.log_id()).clone(),
+                        snapshot_id: meta.snapshot_id.clone(),
+                    })),
+                    openraft::ErrorVerb::Write,
+                    io_err,
+                )
+            })?;
+
+        *self.db.lock().unwrap() = new_db;
+        *self.last_applied.lock().unwrap() = meta.last_log_id;
+        *self.last_membership.lock().unwrap() = meta.last_membership.clone();
+
+        // Update cached snapshot
+        *self.cached_snapshot.lock().unwrap() = Some(Snapshot {
+            meta: meta.clone(),
+            snapshot: Box::new(Cursor::new(bytes)),
+        });
+
         Ok(())
     }
 
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<u64>> {
-        Ok(None)
+        let cached = self.cached_snapshot.lock().unwrap();
+        Ok(cached.as_ref().map(|s| {
+            let data = s.snapshot.get_ref().clone();
+            Snapshot {
+                meta: s.meta.clone(),
+                snapshot: Box::new(Cursor::new(data)),
+            }
+        }))
     }
 }
 
-impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaStateMachine {
+impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilder {
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<u64>> {
         let last_applied = self.last_applied.lock().unwrap().clone();
         let membership = self.last_membership.lock().unwrap().clone();
+
+        let snapshot_id = format!(
+            "snapshot-{}",
+            last_applied.map(|l| l.index).unwrap_or(0)
+        );
+
+        tracing::info!(
+            snapshot_id = %snapshot_id,
+            last_log_id = ?last_applied,
+            "Building snapshot from ManifestDb"
+        );
+
+        let bytes = {
+            let db = self.db.lock().unwrap();
+            db.snapshot_to_bytes()
+                .map_err(|e| {
+                    let io_err = std::io::Error::new(std::io::ErrorKind::Other, e.to_string());
+                    StorageError::from_io_error(
+                        openraft::ErrorSubject::Snapshot(None::<SnapshotSignature<u64>>),
+                        openraft::ErrorVerb::Write,
+                        io_err,
+                    )
+                })?
+        };
+
+        tracing::info!(bytes = bytes.len(), "Snapshot built successfully");
+
         let meta = SnapshotMeta {
             last_log_id: last_applied,
             last_membership: membership,
-            snapshot_id: format!("snapshot-{}", last_applied.map(|l| l.index).unwrap_or(0)),
+            snapshot_id,
         };
+
+        // Cache it
+        *self.cached_snapshot.lock().unwrap() = Some(Snapshot::<TypeConfig> {
+            meta: meta.clone(),
+            snapshot: Box::new(Cursor::new(bytes.clone())),
+        });
+
+        // Return a fresh copy
         Ok(Snapshot {
             meta,
-            snapshot: Box::new(Cursor::new(Vec::new())),
+            snapshot: Box::new(Cursor::new(bytes)),
         })
     }
 }

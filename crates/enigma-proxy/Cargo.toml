@@ -22,11 +22,15 @@ s3s.workspace = true
 s3s-aws.workspace = true
 tower.workspace = true
 bytes.workspace = true
+tonic.workspace = true
+openraft.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
+async-trait.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
 # TLS (optional)
@@ -50,3 +54,4 @@ gcs = ["enigma-storage/gcs"]
 azure-keyvault = ["enigma-keys/azure-keyvault"]
 gcp-secretmanager = ["enigma-keys/gcp-secretmanager"]
 aws-secretsmanager = ["enigma-keys/aws-secretsmanager"]
+postgres = ["enigma-web?/postgres"]

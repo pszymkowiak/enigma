@@ -1,5 +1,6 @@
 use rusqlite::{Connection, params};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::error::{EnigmaError, Result};
 use crate::types::{BackupRecord, BackupStatus, ProviderInfo, ProviderType};
@@ -251,8 +252,9 @@ impl ManifestDb {
         Ok(rows.next().and_then(|r| r.ok()))
     }
 
-    /// Decrement ref_count. If it reaches 0, return the storage info for deletion.
-    pub fn decrement_chunk_ref(&self, hash: &str) -> Result<Option<(i64, String)>> {
+    /// Decrement ref_count. If it reaches 0, return ALL storage locations for deletion
+    /// (primary + replicas). The ON DELETE CASCADE cleans up chunk_replicas automatically.
+    pub fn decrement_chunk_ref(&self, hash: &str) -> Result<Vec<(i64, String)>> {
         self.conn.execute(
             "UPDATE chunks SET ref_count = ref_count - 1 WHERE hash = ?1",
             params![hash],
@@ -265,14 +267,103 @@ impl ManifestDb {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
 
-        if let Some(Ok(info)) = rows.next() {
-            // Delete the chunk record
+        if let Some(Ok(primary)) = rows.next() {
+            // Collect all replica locations before deleting
+            let replicas = self.get_chunk_replicas(hash)?;
+            let mut all_locations = vec![primary];
+            for (pid, skey) in replicas {
+                // Avoid duplicating the primary
+                if !all_locations.iter().any(|(id, _)| *id == pid) {
+                    all_locations.push((pid, skey));
+                }
+            }
+            // Delete the chunk record (cascades to chunk_replicas)
             self.conn
                 .execute("DELETE FROM chunks WHERE hash=?1", params![hash])?;
-            Ok(Some(info))
+            Ok(all_locations)
         } else {
-            Ok(None)
+            Ok(vec![])
         }
+    }
+
+    // ── Chunk Replicas ──────────────────────────────────────────
+
+    /// Insert replica records for a chunk (called when replication_factor > 1).
+    pub fn insert_chunk_replicas(&self, chunk_hash: &str, replicas: &[(i64, &str)]) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO chunk_replicas (chunk_hash, provider_id, storage_key) VALUES (?1, ?2, ?3)",
+        )?;
+        for (provider_id, storage_key) in replicas {
+            stmt.execute(params![chunk_hash, provider_id, storage_key])?;
+        }
+        Ok(())
+    }
+
+    /// Get all replica locations for a chunk.
+    pub fn get_chunk_replicas(&self, chunk_hash: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_id, storage_key FROM chunk_replicas WHERE chunk_hash=?1",
+        )?;
+        let rows = stmt.query_map(params![chunk_hash], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get all storage locations for a chunk (replicas first, then legacy fallback).
+    /// Returns: (nonce, key_id, Vec<(provider_id, storage_key)>, size_encrypted, size_compressed)
+    pub fn get_chunk_locations(
+        &self,
+        hash: &str,
+    ) -> Result<Option<(Vec<u8>, String, Vec<(i64, String)>, u64, Option<u64>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT nonce, key_id, provider_id, storage_key, size_encrypted, size_compressed FROM chunks WHERE hash=?1",
+        )?;
+        let mut rows = stmt.query_map(params![hash], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, Option<u64>>(5)?,
+            ))
+        })?;
+
+        let Some(Ok((nonce, key_id, primary_pid, primary_skey, size_enc, size_compressed))) =
+            rows.next()
+        else {
+            return Ok(None);
+        };
+
+        // Try replicas first
+        let replicas = self.get_chunk_replicas(hash)?;
+        let locations = if replicas.is_empty() {
+            // Legacy fallback: use the primary provider_id from chunks table
+            vec![(primary_pid, primary_skey)]
+        } else {
+            replicas
+        };
+
+        Ok(Some((nonce, key_id, locations, size_enc, size_compressed)))
+    }
+
+    /// Find orphan chunk replicas (replicas whose parent chunk has ref_count <= 0
+    /// or doesn't exist). Returns (chunk_hash, provider_id, storage_key).
+    pub fn find_orphan_chunk_replicas(&self) -> Result<Vec<(String, i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT cr.chunk_hash, cr.provider_id, cr.storage_key FROM chunk_replicas cr
+             LEFT JOIN chunks c ON cr.chunk_hash = c.hash
+             WHERE c.hash IS NULL OR c.ref_count <= 0",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     // ── File-chunk mapping ─────────────────────────────────────
@@ -362,6 +453,99 @@ impl ManifestDb {
             |row| row.get(0),
         )?;
         Ok((total, orphans))
+    }
+
+    /// Detailed chunk storage metrics.
+    pub fn chunk_storage_details(
+        &self,
+    ) -> Result<(u64, u64, u64, Option<u64>, u64)> {
+        // total_size_plain, total_size_encrypted, total_size_compressed, total_refs
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(SUM(size_plain),0), COALESCE(SUM(size_encrypted),0), SUM(size_compressed), COALESCE(SUM(ref_count),0) FROM chunks",
+        )?;
+        let row = stmt.query_row([], |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, Option<u64>>(2)?,
+                row.get::<_, u64>(3)?,
+            ))
+        })?;
+        let total_chunks: u64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+        Ok((row.0, row.1, total_chunks, row.2, row.3))
+    }
+
+    /// Chunks per provider: Vec<(provider_id, provider_name, chunk_count, total_size_encrypted)>
+    /// Counts both primary chunks and replicas.
+    pub fn chunks_per_provider(&self) -> Result<Vec<(i64, String, u64, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_id, provider_name, SUM(cnt), SUM(total_size) FROM (
+                SELECT c.provider_id, COALESCE(p.name, 'unknown') AS provider_name, COUNT(*) AS cnt, COALESCE(SUM(c.size_encrypted),0) AS total_size
+                FROM chunks c LEFT JOIN providers p ON c.provider_id = p.id
+                GROUP BY c.provider_id
+              UNION ALL
+                SELECT cr.provider_id, COALESCE(p.name, 'unknown') AS provider_name, COUNT(*) AS cnt, COALESCE(SUM(c.size_encrypted),0) AS total_size
+                FROM chunk_replicas cr
+                LEFT JOIN providers p ON cr.provider_id = p.id
+                LEFT JOIN chunks c ON cr.chunk_hash = c.hash
+                GROUP BY cr.provider_id
+             ) GROUP BY provider_id ORDER BY SUM(cnt) DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+            ))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Recent chunks: Vec<(hash, provider_name, size_plain, size_encrypted, ref_count, created_at)>
+    pub fn recent_chunks(&self, limit: u32) -> Result<Vec<(String, String, u64, u64, u64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.hash, COALESCE(p.name, 'unknown'), c.size_plain, c.size_encrypted, c.ref_count, c.created_at
+             FROM chunks c LEFT JOIN providers p ON c.provider_id = p.id
+             ORDER BY c.created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    // ── Snapshots ──────────────────────────────────────────────
+
+    /// Serialize the entire DB to bytes via the SQLite backup API.
+    pub fn snapshot_to_bytes(&self) -> Result<Vec<u8>> {
+        let tmp = tempfile::NamedTempFile::new()?;
+        let mut dest = Connection::open(tmp.path())?;
+        let backup = rusqlite::backup::Backup::new(&self.conn, &mut dest)?;
+        backup.run_to_completion(100, Duration::ZERO, None)?;
+        drop(backup);
+        drop(dest);
+        Ok(std::fs::read(tmp.path())?)
+    }
+
+    /// Restore DB from raw bytes, writing to the given path.
+    pub fn restore_from_bytes(data: &[u8], path: &Path) -> Result<Self> {
+        let tmp_path = path.with_extension("snap.tmp");
+        std::fs::write(&tmp_path, data)?;
+        // Verify it opens correctly
+        let db = Self::open(&tmp_path)?;
+        drop(db);
+        std::fs::rename(&tmp_path, path)?;
+        Self::open(path)
     }
 
     // ── S3 Gateway: Namespaces ───────────────────────────────
@@ -460,9 +644,8 @@ impl ManifestDb {
         let mut to_delete = Vec::new();
 
         for (chunk_hash, _, _) in &chunk_hashes {
-            if let Some(info) = self.decrement_chunk_ref(chunk_hash)? {
-                to_delete.push(info);
-            }
+            let locations = self.decrement_chunk_ref(chunk_hash)?;
+            to_delete.extend(locations);
         }
 
         // Delete object_chunks and object
@@ -714,11 +897,11 @@ mod tests {
 
         // First decrement: ref_count goes to 1 — no deletion
         let result = db.decrement_chunk_ref("aaa").unwrap();
-        assert!(result.is_none());
+        assert!(result.is_empty());
 
         // Second decrement: ref_count goes to 0 — returns deletion info
         let result = db.decrement_chunk_ref("aaa").unwrap();
-        assert!(result.is_some());
+        assert!(!result.is_empty());
     }
 
     #[test]
@@ -730,5 +913,115 @@ mod tests {
 
         let logs = db.get_logs("b1").unwrap();
         assert_eq!(logs.len(), 2);
+    }
+
+    #[test]
+    fn insert_and_get_chunk_replicas() {
+        let db = ManifestDb::open_in_memory().unwrap();
+        let p1 = db
+            .insert_provider("p1", ProviderType::Local, "/a", None, 1)
+            .unwrap();
+        let p2 = db
+            .insert_provider("p2", ProviderType::Local, "/b", None, 1)
+            .unwrap();
+
+        db.insert_or_dedup_chunk("hash1", &[0; 12], "k1", p1, "key1", 100, 116, None)
+            .unwrap();
+
+        db.insert_chunk_replicas("hash1", &[(p1, "key1"), (p2, "key1")])
+            .unwrap();
+
+        let replicas = db.get_chunk_replicas("hash1").unwrap();
+        assert_eq!(replicas.len(), 2);
+        let pids: Vec<i64> = replicas.iter().map(|(pid, _)| *pid).collect();
+        assert!(pids.contains(&p1));
+        assert!(pids.contains(&p2));
+    }
+
+    #[test]
+    fn get_chunk_locations_with_replicas() {
+        let db = ManifestDb::open_in_memory().unwrap();
+        let p1 = db
+            .insert_provider("p1", ProviderType::Local, "/a", None, 1)
+            .unwrap();
+        let p2 = db
+            .insert_provider("p2", ProviderType::Local, "/b", None, 1)
+            .unwrap();
+
+        db.insert_or_dedup_chunk("hash2", &[1; 12], "k1", p1, "skey", 200, 216, None)
+            .unwrap();
+        db.insert_chunk_replicas("hash2", &[(p1, "skey"), (p2, "skey")])
+            .unwrap();
+
+        let loc = db.get_chunk_locations("hash2").unwrap().unwrap();
+        let (_nonce, _key_id, locations, _size_enc, _size_comp) = loc;
+        assert_eq!(locations.len(), 2);
+    }
+
+    #[test]
+    fn get_chunk_locations_legacy_fallback() {
+        let db = ManifestDb::open_in_memory().unwrap();
+        let p1 = db
+            .insert_provider("p1", ProviderType::Local, "/a", None, 1)
+            .unwrap();
+
+        db.insert_or_dedup_chunk("hash3", &[2; 12], "k1", p1, "skey3", 300, 316, None)
+            .unwrap();
+        // No replicas inserted — should fallback to primary from chunks table
+
+        let loc = db.get_chunk_locations("hash3").unwrap().unwrap();
+        let (_nonce, _key_id, locations, _size_enc, _size_comp) = loc;
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].0, p1);
+        assert_eq!(locations[0].1, "skey3");
+    }
+
+    #[test]
+    fn decrement_chunk_ref_returns_all_replicas() {
+        let db = ManifestDb::open_in_memory().unwrap();
+        let p1 = db
+            .insert_provider("p1", ProviderType::Local, "/a", None, 1)
+            .unwrap();
+        let p2 = db
+            .insert_provider("p2", ProviderType::Local, "/b", None, 1)
+            .unwrap();
+
+        db.insert_or_dedup_chunk("hash4", &[3; 12], "k1", p1, "skey4", 400, 416, None)
+            .unwrap();
+        db.insert_chunk_replicas("hash4", &[(p1, "skey4"), (p2, "skey4")])
+            .unwrap();
+
+        // Decrement to 0 → should return both provider locations
+        let result = db.decrement_chunk_ref("hash4").unwrap();
+        assert_eq!(result.len(), 2);
+        let pids: Vec<i64> = result.iter().map(|(pid, _)| *pid).collect();
+        assert!(pids.contains(&p1));
+        assert!(pids.contains(&p2));
+
+        // Chunk should be deleted, replicas cascaded
+        let replicas = db.get_chunk_replicas("hash4").unwrap();
+        assert!(replicas.is_empty());
+    }
+
+    #[test]
+    fn cascade_delete_chunk_replicas() {
+        let db = ManifestDb::open_in_memory().unwrap();
+        let p1 = db
+            .insert_provider("p1", ProviderType::Local, "/a", None, 1)
+            .unwrap();
+        let p2 = db
+            .insert_provider("p2", ProviderType::Local, "/b", None, 1)
+            .unwrap();
+
+        db.insert_or_dedup_chunk("hash5", &[4; 12], "k1", p1, "skey5", 500, 516, None)
+            .unwrap();
+        db.insert_chunk_replicas("hash5", &[(p1, "skey5"), (p2, "skey5")])
+            .unwrap();
+
+        // Direct delete of chunk record should cascade to replicas
+        db.delete_chunk_record("hash5").unwrap();
+
+        let replicas = db.get_chunk_replicas("hash5").unwrap();
+        assert!(replicas.is_empty());
     }
 }

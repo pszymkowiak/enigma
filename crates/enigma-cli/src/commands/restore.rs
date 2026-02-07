@@ -109,17 +109,28 @@ pub async fn run(
 
         let mut file_data = Vec::new();
         for (chunk_hash, _chunk_index, _offset) in &file_chunks {
-            // Get chunk info from DB
-            let chunk_info = db
-                .get_chunk_info(chunk_hash)?
+            // Get chunk locations (with replica fallback)
+            let (nonce, key_id, locations, _size_enc, size_compressed) = db
+                .get_chunk_locations(chunk_hash)?
                 .ok_or_else(|| anyhow::anyhow!("Chunk {chunk_hash} not found in database"))?;
-            let (nonce, key_id, provider_id, storage_key, _size, size_compressed) = chunk_info;
 
-            // Download from storage
-            let provider = storage_providers
-                .get(&provider_id)
-                .ok_or_else(|| anyhow::anyhow!("Provider {provider_id} not found"))?;
-            let ciphertext = provider.download_chunk(&storage_key).await?;
+            // Download with fallback across replicas
+            let mut ciphertext = None;
+            for (pid, skey) in &locations {
+                if let Some(provider) = storage_providers.get(pid) {
+                    match provider.download_chunk(skey).await {
+                        Ok(data) => {
+                            ciphertext = Some(data);
+                            break;
+                        }
+                        Err(e) => {
+                            eprintln!("WARN: Provider {pid} failed for chunk {chunk_hash}: {e}, trying next");
+                        }
+                    }
+                }
+            }
+            let ciphertext = ciphertext
+                .ok_or_else(|| anyhow::anyhow!("All providers failed for chunk {chunk_hash}"))?;
 
             // Get the key
             let managed_key = key_provider.get_key_by_id(&key_id).await?;
