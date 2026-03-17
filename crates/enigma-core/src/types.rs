@@ -198,7 +198,7 @@ pub enum DistributionStrategy {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(bytes)
 }
 
 #[cfg(test)]

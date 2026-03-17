@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::provider::{MANIFEST_KEY, StorageProvider};
+use crate::provider::StorageProvider;
 
 /// Filesystem-based storage provider for local testing.
 pub struct LocalStorageProvider {
@@ -24,10 +24,6 @@ impl LocalStorageProvider {
             anyhow::bail!("invalid chunk key: path traversal detected");
         }
         Ok(self.base_path.join(key))
-    }
-
-    fn manifest_path(&self) -> PathBuf {
-        self.base_path.join(MANIFEST_KEY)
     }
 }
 
@@ -59,15 +55,6 @@ impl StorageProvider for LocalStorageProvider {
     async fn chunk_exists(&self, key: &str) -> anyhow::Result<bool> {
         let path = self.chunk_path(key)?;
         Ok(tokio::fs::try_exists(&path).await?)
-    }
-
-    async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
-        tokio::fs::write(self.manifest_path(), data).await?;
-        Ok(())
-    }
-
-    async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(tokio::fs::read(self.manifest_path()).await?)
     }
 
     async fn test_connection(&self) -> anyhow::Result<()> {

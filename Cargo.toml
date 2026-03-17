@@ -135,3 +135,9 @@ enigma-s3 = { path = "crates/enigma-s3" }
 enigma-raft = { path = "crates/enigma-raft" }
 enigma-web = { path = "crates/enigma-web" }
 enigma-auth = { path = "crates/enigma-auth" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

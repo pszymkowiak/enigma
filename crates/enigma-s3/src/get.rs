@@ -35,16 +35,25 @@ pub async fn handle_get_object(
             .map_err(|_| s3_error!(InternalError))?
     };
 
+    // Fetch all chunk info in one pass under a single DB lock
+    let chunk_infos: Vec<_> = {
+        let db = state.db.lock().map_err(|_| s3_error!(InternalError))?;
+        chunk_list
+            .iter()
+            .map(|(chunk_hash_hex, _chunk_index, _offset)| {
+                db.get_chunk_info(chunk_hash_hex)
+                    .map_err(|_| s3_error!(InternalError))?
+                    .ok_or_else(|| s3_error!(InternalError))
+            })
+            .collect::<S3Result<Vec<_>>>()?
+    };
+    // DB lock is released here — I/O below does not hold it
+
     // Download, decrypt, and reassemble
     let mut file_data = Vec::with_capacity(size as usize);
 
-    for (chunk_hash_hex, _chunk_index, _offset) in &chunk_list {
-        let chunk_info = {
-            let db = state.db.lock().map_err(|_| s3_error!(InternalError))?;
-            db.get_chunk_info(chunk_hash_hex)
-                .map_err(|_| s3_error!(InternalError))?
-                .ok_or_else(|| s3_error!(InternalError))?
-        };
+    for ((chunk_hash_hex, _chunk_index, _offset), chunk_info) in chunk_list.iter().zip(chunk_infos)
+    {
         let (nonce, _chunk_key_id, provider_id, storage_key, _size_enc, size_compressed) =
             chunk_info;
 

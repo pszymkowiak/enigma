@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1717,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1725,6 +1725,7 @@ dependencies = [
  "enigma-core",
  "enigma-keys",
  "enigma-storage",
+ "futures",
  "glob",
  "hex",
  "indicatif",
@@ -1742,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1770,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-keys"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1802,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-proxy"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1839,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-raft"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1863,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-s3"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1890,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1911,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "enigma-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
