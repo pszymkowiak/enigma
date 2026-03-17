@@ -188,7 +188,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
                             .await
                         {
                             Ok(_) => {}
-                            Err(e) if target.id == primary.id => return Err(e.into()),
+                            Err(e) if target.id == primary.id => return Err(e),
                             Err(e) => {
                                 tracing::warn!(
                                     "Replica upload to provider {} failed: {e}",

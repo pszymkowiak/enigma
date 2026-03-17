@@ -89,11 +89,13 @@ pub async fn handle_get_object(
         file_data.extend_from_slice(&plaintext);
     }
 
-    let mut output = GetObjectOutput::default();
-    output.content_length = Some(size as i64);
-    output.e_tag = Some(format!("\"{etag}\""));
-    output.content_type = content_type.and_then(|ct| ct.parse().ok());
-    output.body = Some(StreamingBlob::from(s3s::Body::from(file_data)));
+    let output = GetObjectOutput {
+        content_length: Some(size as i64),
+        e_tag: Some(format!("\"{etag}\"")),
+        content_type: content_type.and_then(|ct| ct.parse().ok()),
+        body: Some(StreamingBlob::from(s3s::Body::from(file_data))),
+        ..Default::default()
+    };
 
     Ok(S3Response::new(output))
 }

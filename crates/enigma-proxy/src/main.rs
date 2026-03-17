@@ -1,6 +1,7 @@
 #[cfg(feature = "metrics")]
 mod metrics;
 
+#[allow(unused_imports)]
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -465,6 +466,7 @@ async fn main() -> anyhow::Result<()> {
             proxy_config.enigma.db_path.clone(),
         );
         let network = enigma_raft::network::EnigmaNetworkFactory::new(peer_map.clone());
+        #[allow(unused_variables)]
         let shared_peers = network.peers.clone();
         tracing::info!("Creating Raft engine...");
 

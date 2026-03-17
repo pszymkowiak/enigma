@@ -84,13 +84,13 @@ pub async fn handle_put_object(
             .map_err(|_| s3_error!(InternalError))?
         };
 
-        if is_new {
-            if let Some(provider) = state.providers.get(&target_provider.id) {
-                provider
-                    .upload_chunk(&storage_key, &encrypted.ciphertext)
-                    .await
-                    .map_err(|_| s3_error!(InternalError))?;
-            }
+        if is_new
+            && let Some(provider) = state.providers.get(&target_provider.id)
+        {
+            provider
+                .upload_chunk(&storage_key, &encrypted.ciphertext)
+                .await
+                .map_err(|_| s3_error!(InternalError))?;
         }
 
         chunk_records.push((hash_hex, idx as u32, chunk_bytes.len() as u64));
@@ -120,8 +120,10 @@ pub async fn handle_put_object(
         }
     }
 
-    let mut output = PutObjectOutput::default();
-    output.e_tag = Some(format!("\"{etag}\""));
+    let output = PutObjectOutput {
+        e_tag: Some(format!("\"{etag}\"")),
+        ..Default::default()
+    };
     Ok(S3Response::new(output))
 }
 
@@ -186,8 +188,8 @@ fn find_boundary(data: &[u8], min_size: usize, target: usize, max_size: usize) -
     let mask = (1u64 << 22) - 1;
     let mut hash: u64 = 0;
 
-    for i in min_size..len {
-        hash = hash.wrapping_mul(31).wrapping_add(data[i] as u64);
+    for (i, &byte) in data.iter().enumerate().skip(min_size).take(len - min_size) {
+        hash = hash.wrapping_mul(31).wrapping_add(byte as u64);
         if hash & mask == 0 {
             return i + 1;
         }

@@ -24,10 +24,12 @@ pub async fn handle_create_multipart_upload(
     db.create_multipart_upload(&upload_id, ns_id, key)
         .map_err(|_| s3_error!(InternalError))?;
 
-    let mut output = CreateMultipartUploadOutput::default();
-    output.bucket = Some(bucket.to_string());
-    output.key = Some(key.to_string());
-    output.upload_id = Some(upload_id);
+    let output = CreateMultipartUploadOutput {
+        bucket: Some(bucket.to_string()),
+        key: Some(key.to_string()),
+        upload_id: Some(upload_id),
+        ..Default::default()
+    };
 
     Ok(S3Response::new(output))
 }
@@ -57,8 +59,10 @@ pub async fn handle_upload_part(
     db.insert_multipart_part(upload_id, part_number, &data, &etag)
         .map_err(|_| s3_error!(InternalError))?;
 
-    let mut output = UploadPartOutput::default();
-    output.e_tag = Some(format!("\"{etag}\""));
+    let output = UploadPartOutput {
+        e_tag: Some(format!("\"{etag}\"")),
+        ..Default::default()
+    };
 
     Ok(S3Response::new(output))
 }
@@ -146,13 +150,13 @@ pub async fn handle_complete_multipart_upload(
             .map_err(|_| s3_error!(InternalError))?
         };
 
-        if is_new {
-            if let Some(provider) = state.providers.get(&target_provider.id) {
-                provider
-                    .upload_chunk(&storage_key, &encrypted.ciphertext)
-                    .await
-                    .map_err(|_| s3_error!(InternalError))?;
-            }
+        if is_new
+            && let Some(provider) = state.providers.get(&target_provider.id)
+        {
+            provider
+                .upload_chunk(&storage_key, &encrypted.ciphertext)
+                .await
+                .map_err(|_| s3_error!(InternalError))?;
         }
 
         chunk_records.push((hash_hex, idx as u32, chunk_data.len() as u64));
@@ -186,11 +190,13 @@ pub async fn handle_complete_multipart_upload(
             .map_err(|_| s3_error!(InternalError))?;
     }
 
-    let mut output = CompleteMultipartUploadOutput::default();
-    output.bucket = Some(bucket.to_string());
-    output.key = Some(key.to_string());
-    output.e_tag = Some(format!("\"{etag}\""));
-    output.location = Some(format!("/{bucket}/{key}"));
+    let output = CompleteMultipartUploadOutput {
+        bucket: Some(bucket.to_string()),
+        key: Some(key.to_string()),
+        e_tag: Some(format!("\"{etag}\"")),
+        location: Some(format!("/{bucket}/{key}")),
+        ..Default::default()
+    };
 
     Ok(S3Response::new(output))
 }

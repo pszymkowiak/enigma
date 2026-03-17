@@ -157,7 +157,7 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
         let mut client = self.client().await.map_err(|e| match e {
             RPCError::Unreachable(u) => openraft::error::StreamingError::Unreachable(u),
             _ => openraft::error::StreamingError::Unreachable(Unreachable::new(
-                &std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")),
+                &std::io::Error::other(format!("{e}")),
             )),
         })?;
 

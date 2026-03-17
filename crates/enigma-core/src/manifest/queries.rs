@@ -204,6 +204,7 @@ impl ManifestDb {
     // ── Chunks ─────────────────────────────────────────────────
 
     /// Insert a new chunk. Returns true if inserted (new), false if already existed (dedup).
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_or_dedup_chunk(
         &self,
         hash: &str,
@@ -232,6 +233,7 @@ impl ManifestDb {
         Ok(true) // new
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_chunk_info(
         &self,
         hash: &str,
@@ -312,6 +314,7 @@ impl ManifestDb {
 
     /// Get all storage locations for a chunk (replicas first, then legacy fallback).
     /// Returns: (nonce, key_id, Vec<(provider_id, storage_key)>, size_encrypted, size_compressed)
+    #[allow(clippy::type_complexity)]
     pub fn get_chunk_locations(
         &self,
         hash: &str,
@@ -505,6 +508,7 @@ impl ManifestDb {
     }
 
     /// Recent chunks: Vec<(hash, provider_name, size_plain, size_encrypted, ref_count, created_at)>
+    #[allow(clippy::type_complexity)]
     pub fn recent_chunks(&self, limit: u32) -> Result<Vec<(String, String, u64, u64, u64, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT c.hash, COALESCE(p.name, 'unknown'), c.size_plain, c.size_encrypted, c.ref_count, c.created_at
@@ -585,6 +589,7 @@ impl ManifestDb {
 
     // ── S3 Gateway: Objects ──────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_object(
         &self,
         namespace_id: i64,
@@ -604,6 +609,7 @@ impl ManifestDb {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_object(
         &self,
         namespace_id: i64,
@@ -760,6 +766,7 @@ impl ManifestDb {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_multipart_parts(&self, upload_id: &str) -> Result<Vec<(i32, Vec<u8>, u64, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT part_number, data, size, etag FROM multipart_parts WHERE upload_id=?1 ORDER BY part_number",

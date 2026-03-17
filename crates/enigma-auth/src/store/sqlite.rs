@@ -119,10 +119,10 @@ impl AuthStore for SqliteAuthStore {
                 rusqlite::params![id, username, email, password_hash],
             )
             .map_err(|e| {
-                if let rusqlite::Error::SqliteFailure(ref err, _) = e {
-                    if err.extended_code == 2067 {
-                        return AuthError::Duplicate(format!("user '{username}' already exists"));
-                    }
+                if let rusqlite::Error::SqliteFailure(ref err, _) = e
+                    && err.extended_code == 2067
+                {
+                    return AuthError::Duplicate(format!("user '{username}' already exists"));
                 }
                 AuthError::Database(e.to_string())
             })?;
@@ -270,10 +270,10 @@ impl AuthStore for SqliteAuthStore {
                 rusqlite::params![id, name, description, is_system as i32],
             )
             .map_err(|e| {
-                if let rusqlite::Error::SqliteFailure(ref err, _) = e {
-                    if err.extended_code == 2067 {
-                        return AuthError::Duplicate(format!("group '{name}' already exists"));
-                    }
+                if let rusqlite::Error::SqliteFailure(ref err, _) = e
+                    && err.extended_code == 2067
+                {
+                    return AuthError::Duplicate(format!("group '{name}' already exists"));
                 }
                 AuthError::Database(e.to_string())
             })?;
