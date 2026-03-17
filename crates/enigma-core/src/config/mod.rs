@@ -108,13 +108,33 @@ fn default_weight() -> u32 {
 }
 
 impl EnigmaConfig {
+    /// Validate configuration values.
+    pub fn validate(&self) -> Result<()> {
+        if self.enigma.compression.level < 1 || self.enigma.compression.level > 22 {
+            return Err(EnigmaError::Config(format!(
+                "compression.level must be between 1 and 22 (zstd range), got {}",
+                self.enigma.compression.level
+            )));
+        }
+        if self.enigma.replication_factor < 1 {
+            return Err(EnigmaError::Config(format!(
+                "replication_factor must be >= 1, got {}",
+                self.enigma.replication_factor
+            )));
+        }
+        Ok(())
+    }
+
     /// Load config from a TOML file.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Err(EnigmaError::ConfigNotFound(path.display().to_string()));
         }
         let content = std::fs::read_to_string(path)?;
-        toml::from_str(&content).map_err(|e| EnigmaError::TomlDe(e.to_string()))
+        let config: Self =
+            toml::from_str(&content).map_err(|e| EnigmaError::TomlDe(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
     }
 
     /// Save config to a TOML file. On Unix, sets permissions to 0o600 (owner-only).

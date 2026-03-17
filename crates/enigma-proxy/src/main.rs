@@ -187,12 +187,8 @@ fn get_passphrase(cli_passphrase: &Option<String>) -> anyhow::Result<String> {
     if let Some(p) = cli_passphrase {
         return Ok(p.clone());
     }
-    use std::io::{self, Write};
-    print!("Enter passphrase: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
+    let passphrase = rpassword::prompt_password_stdout("Enter passphrase: ")?;
+    Ok(passphrase)
 }
 
 #[tokio::main]

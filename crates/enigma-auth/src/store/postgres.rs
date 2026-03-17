@@ -115,11 +115,12 @@ impl AuthStore for PostgresAuthStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| {
-            if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
-                AuthError::Duplicate(format!("user '{username}' already exists"))
-            } else {
-                AuthError::Database(e.to_string())
+            if let sqlx::Error::Database(ref db_err) = e {
+                if db_err.code().map_or(false, |c| c == "23505") {
+                    return AuthError::Duplicate(format!("user '{username}' already exists"));
+                }
             }
+            AuthError::Database(e.to_string())
         })?;
         Ok(User {
             id: row.0,
@@ -279,11 +280,12 @@ impl AuthStore for PostgresAuthStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| {
-            if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
-                AuthError::Duplicate(format!("group '{name}' already exists"))
-            } else {
-                AuthError::Database(e.to_string())
+            if let sqlx::Error::Database(ref db_err) = e {
+                if db_err.code().map_or(false, |c| c == "23505") {
+                    return AuthError::Duplicate(format!("group '{name}' already exists"));
+                }
             }
+            AuthError::Database(e.to_string())
         })?;
         Ok(Group {
             id: row.0,

@@ -5,6 +5,13 @@ use std::time::Duration;
 use crate::error::{EnigmaError, Result};
 use crate::types::{BackupRecord, BackupStatus, ProviderInfo, ProviderType};
 
+/// Escape special characters in a string used as a LIKE pattern argument.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// High-level interface for manifest database operations.
 pub struct ManifestDb {
     conn: Connection,
@@ -771,9 +778,9 @@ impl ManifestDb {
         max_keys: u32,
         start_after: &str,
     ) -> Result<Vec<(String, u64, String, String)>> {
-        let prefix_pattern = format!("{prefix}%");
+        let prefix_pattern = format!("{}%", escape_like(prefix));
         let mut stmt = self.conn.prepare(
-            "SELECT key, size, etag, created_at FROM objects WHERE namespace_id=?1 AND key LIKE ?2 AND key > ?3 ORDER BY key LIMIT ?4",
+            "SELECT key, size, etag, created_at FROM objects WHERE namespace_id=?1 AND key LIKE ?2 ESCAPE '\\' AND key > ?3 ORDER BY key LIMIT ?4",
         )?;
         let rows = stmt.query_map(
             params![namespace_id, prefix_pattern, start_after, max_keys],
@@ -790,9 +797,9 @@ impl ManifestDb {
     }
 
     pub fn count_objects_with_prefix(&self, namespace_id: i64, prefix: &str) -> Result<u64> {
-        let prefix_pattern = format!("{prefix}%");
+        let prefix_pattern = format!("{}%", escape_like(prefix));
         let count: u64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM objects WHERE namespace_id=?1 AND key LIKE ?2",
+            "SELECT COUNT(*) FROM objects WHERE namespace_id=?1 AND key LIKE ?2 ESCAPE '\\'",
             params![namespace_id, prefix_pattern],
             |row| row.get(0),
         )?;
