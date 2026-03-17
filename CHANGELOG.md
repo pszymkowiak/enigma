@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/pszymkowiak/enigma/compare/enigma-v0.1.1...enigma-v0.1.2) (2026-03-17)
+
+
+### Bug Fixes
+
+* deep review hardening — credentials, auth, config validation, SQL safety ([#6](https://github.com/pszymkowiak/enigma/issues/6)) ([688a908](https://github.com/pszymkowiak/enigma/commit/688a9083e30bed9fd207b49a2c63fb61b3610607))
+* vendor OpenSSL for aarch64-linux cross-compilation ([#4](https://github.com/pszymkowiak/enigma/issues/4)) ([8b46d41](https://github.com/pszymkowiak/enigma/commit/8b46d415cebc5f20c1e4304d4966d18cb651801f))
+
 ## [0.1.1](https://github.com/pszymkowiak/enigma/compare/enigma-v0.1.0...enigma-v0.1.1) (2026-03-17)
 
 
