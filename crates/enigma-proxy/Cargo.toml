@@ -44,8 +44,12 @@ prometheus = { workspace = true, optional = true }
 # Web UI (optional)
 enigma-web = { workspace = true, optional = true }
 
+# OpenSSL (vendored for cross-compilation)
+openssl = { workspace = true, optional = true }
+
 [features]
 default = []
+vendored-openssl = ["dep:openssl"]
 tls = ["dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls"]
 metrics = ["dep:prometheus"]
 web = ["dep:enigma-web"]
