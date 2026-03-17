@@ -62,19 +62,19 @@ pub async fn run(
     let all_files = db.list_backup_files(backup_id)?;
 
     // Apply filters
-    let glob_pattern = glob_filter.map(|g| glob::Pattern::new(g)).transpose()?;
+    let glob_pattern = glob_filter.map(glob::Pattern::new).transpose()?;
     let files: Vec<_> = all_files
         .into_iter()
         .filter(|(_id, path, _size, _hash)| {
-            if let Some(prefix) = path_filter {
-                if !path.starts_with(prefix) {
-                    return false;
-                }
+            if let Some(prefix) = path_filter
+                && !path.starts_with(prefix)
+            {
+                return false;
             }
-            if let Some(ref pat) = glob_pattern {
-                if !pat.matches(path) {
-                    return false;
-                }
+            if let Some(ref pat) = glob_pattern
+                && !pat.matches(path)
+            {
+                return false;
             }
             true
         })
@@ -124,7 +124,9 @@ pub async fn run(
                             break;
                         }
                         Err(e) => {
-                            eprintln!("WARN: Provider {pid} failed for chunk {chunk_hash}: {e}, trying next");
+                            eprintln!(
+                                "WARN: Provider {pid} failed for chunk {chunk_hash}: {e}, trying next"
+                            );
                         }
                     }
                 }

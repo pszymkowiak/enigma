@@ -67,7 +67,7 @@ struct StoredKey {
 mod base64_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
         let encoded = base64_encode(bytes);
         encoded.serialize(s)
     }

@@ -1,6 +1,7 @@
 #[cfg(feature = "metrics")]
 mod metrics;
 
+#[allow(unused_imports)]
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -68,11 +69,7 @@ impl enigma_web::cluster_handle::ClusterHandle for RaftClusterHandle {
 
         // Then promote to voter — get current voter IDs and add the new node
         let m = self.raft.metrics().borrow().clone();
-        let mut voter_ids: BTreeSet<u64> = m
-            .membership_config
-            .membership()
-            .voter_ids()
-            .collect();
+        let mut voter_ids: BTreeSet<u64> = m.membership_config.membership().voter_ids().collect();
         voter_ids.insert(node_id);
         self.raft.change_membership(voter_ids, false).await?;
 
@@ -296,12 +293,12 @@ async fn main() -> anyhow::Result<()> {
                         pc.name
                     )
                 })?;
-                Box::new(AzureStorageProvider::new(account, key, &pc.bucket, &pc.name)?)
+                Box::new(AzureStorageProvider::new(
+                    account, key, &pc.bucket, &pc.name,
+                )?)
             }
             #[cfg(feature = "gcs")]
-            ProviderType::Gcs => {
-                Box::new(GcsStorageProvider::new(&pc.bucket, &pc.name).await?)
-            }
+            ProviderType::Gcs => Box::new(GcsStorageProvider::new(&pc.bucket, &pc.name).await?),
             _ => {
                 anyhow::bail!("Unsupported provider type: {:?}", pc.provider_type);
             }
@@ -428,15 +425,15 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // Use only self when in recovery mode
-        let effective_peers: Vec<enigma_raft::config::PeerConfig> =
-            if raft_config.force_new_cluster {
-                vec![enigma_raft::config::PeerConfig {
-                    id: node_id,
-                    addr: raft_config.grpc_addr.clone(),
-                }]
-            } else {
-                raft_config.peers.clone()
-            };
+        let effective_peers: Vec<enigma_raft::config::PeerConfig> = if raft_config.force_new_cluster
+        {
+            vec![enigma_raft::config::PeerConfig {
+                id: node_id,
+                addr: raft_config.grpc_addr.clone(),
+            }]
+        } else {
+            raft_config.peers.clone()
+        };
 
         tracing::info!(
             "Raft mode: node_id={}, peers={}{}",
@@ -465,6 +462,7 @@ async fn main() -> anyhow::Result<()> {
             proxy_config.enigma.db_path.clone(),
         );
         let network = enigma_raft::network::EnigmaNetworkFactory::new(peer_map.clone());
+        #[allow(unused_variables)]
         let shared_peers = network.peers.clone();
         tracing::info!("Creating Raft engine...");
 
@@ -495,8 +493,7 @@ async fn main() -> anyhow::Result<()> {
         // Start gRPC server for inter-node communication
         let grpc_addr: SocketAddr = raft_config.grpc_addr.parse()?;
         let grpc_server = enigma_raft::grpc_server::EnigmaRaftGrpcServer::new(raft.clone());
-        let grpc_svc =
-            enigma_raft::proto::raft_service_server::RaftServiceServer::new(grpc_server);
+        let grpc_svc = enigma_raft::proto::raft_service_server::RaftServiceServer::new(grpc_server);
 
         tracing::info!("Starting Raft gRPC server on {grpc_addr}");
         tokio::spawn(async move {
@@ -532,13 +529,12 @@ async fn main() -> anyhow::Result<()> {
 
         // Build cluster handle for web UI
         #[cfg(feature = "web")]
-        let cluster_handle: Option<Arc<dyn enigma_web::cluster_handle::ClusterHandle>> = Some(
-            Arc::new(RaftClusterHandle {
+        let cluster_handle: Option<Arc<dyn enigma_web::cluster_handle::ClusterHandle>> =
+            Some(Arc::new(RaftClusterHandle {
                 raft: raft.clone(),
                 node_id,
                 peers: shared_peers,
-            }),
-        );
+            }));
 
         // Spawn leadership watch — start/stop web UI based on leadership
         #[cfg(feature = "web")]

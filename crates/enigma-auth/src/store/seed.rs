@@ -1,5 +1,5 @@
-use crate::permissions::PERMISSIONS;
 use crate::error::AuthError;
+use crate::permissions::PERMISSIONS;
 use crate::store::AuthStore;
 
 const READ_PERMISSIONS: &[&str] = &[
@@ -44,7 +44,9 @@ pub async fn seed_defaults(store: &dyn AuthStore) -> Result<(), AuthError> {
     }
 
     // Create wildcard permission for owner
-    let wildcard = store.create_permission("*", "All permissions (wildcard)").await?;
+    let wildcard = store
+        .create_permission("*", "All permissions (wildcard)")
+        .await?;
     perm_map.insert("*".to_string(), wildcard.id);
 
     // Create groups (idempotent via name check)
@@ -57,9 +59,7 @@ pub async fn seed_defaults(store: &dyn AuthStore) -> Result<(), AuthError> {
     for (name, desc) in &groups {
         let group = match store.get_group_by_name(name).await {
             Ok(g) => g,
-            Err(AuthError::NotFound(_)) => {
-                store.create_group(name, desc, true).await?
-            }
+            Err(AuthError::NotFound(_)) => store.create_group(name, desc, true).await?,
             Err(e) => return Err(e),
         };
 

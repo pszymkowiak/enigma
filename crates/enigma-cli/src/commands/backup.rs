@@ -188,7 +188,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
                             .await
                         {
                             Ok(_) => {}
-                            Err(e) if target.id == primary.id => return Err(e.into()),
+                            Err(e) if target.id == primary.id => return Err(e),
                             Err(e) => {
                                 tracing::warn!(
                                     "Replica upload to provider {} failed: {e}",
@@ -200,8 +200,10 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
                 }
                 // Record replicas
                 if targets.len() > 1 {
-                    let replicas: Vec<(i64, &str)> =
-                        targets.iter().map(|t| (t.id, storage_key.as_str())).collect();
+                    let replicas: Vec<(i64, &str)> = targets
+                        .iter()
+                        .map(|t| (t.id, storage_key.as_str()))
+                        .collect();
                     db.insert_chunk_replicas(&hash_hex, &replicas)?;
                 }
             } else {

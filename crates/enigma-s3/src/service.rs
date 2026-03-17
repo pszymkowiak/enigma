@@ -36,8 +36,9 @@ impl S3 for EnigmaS3Service {
         db.create_namespace(bucket)
             .map_err(|_| s3_error!(InternalError))?;
 
-        let mut output = CreateBucketOutput::default();
-        output.location = Some(format!("/{bucket}"));
+        let output = CreateBucketOutput {
+            location: Some(format!("/{bucket}")),
+        };
         Ok(S3Response::new(output))
     }
 
@@ -101,12 +102,14 @@ impl S3 for EnigmaS3Service {
             })
             .collect();
 
-        let mut output = ListBucketsOutput::default();
-        output.buckets = Some(buckets);
-        output.owner = Some(Owner {
-            display_name: Some("enigma".to_string()),
-            id: Some("enigma".to_string()),
-        });
+        let output = ListBucketsOutput {
+            buckets: Some(buckets),
+            owner: Some(Owner {
+                display_name: Some("enigma".to_string()),
+                id: Some("enigma".to_string()),
+            }),
+            ..Default::default()
+        };
         Ok(S3Response::new(output))
     }
 
@@ -156,10 +159,12 @@ impl S3 for EnigmaS3Service {
 
         let (_obj_id, size, etag, content_type, _chunk_count, _key_id, _last_modified) = obj;
 
-        let mut output = HeadObjectOutput::default();
-        output.content_length = Some(size as i64);
-        output.e_tag = Some(format!("\"{etag}\""));
-        output.content_type = content_type.and_then(|ct| ct.parse().ok());
+        let output = HeadObjectOutput {
+            content_length: Some(size as i64),
+            e_tag: Some(format!("\"{etag}\"")),
+            content_type: content_type.and_then(|ct| ct.parse().ok()),
+            ..Default::default()
+        };
 
         Ok(S3Response::new(output))
     }

@@ -1904,20 +1904,15 @@ name = "enigma-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "axum 0.8.8",
  "chrono",
- "enigma-auth",
  "enigma-core",
- "enigma-s3",
- "enigma-storage",
  "jsonwebtoken",
  "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",
  "tokio",
- "tower-http",
  "tracing",
 ]
 
@@ -5814,7 +5809,6 @@ dependencies = [
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]

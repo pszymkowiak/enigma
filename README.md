@@ -1,3 +1,5 @@
+**English** | [Français](README_fr.md) | [Español](README_es.md) | [Deutsch](README_de.md) | [Italiano](README_it.md) | [Português](README_pt.md) | [Nederlands](README_nl.md) | [Polski](README_pl.md) | [Русский](README_ru.md) | [日本語](README_ja.md) | [中文](README_zh.md) | [العربية](README_ar.md) | [한국어](README_ko.md)
+
 # Enigma
 
 Multi-cloud encrypted backup tool with an S3-compatible gateway and Raft-based high availability.
@@ -478,4 +480,4 @@ enigma-proxy --config /etc/enigma/config.toml
 
 ## License
 
-MIT
+Source-Available (see [LICENSE](LICENSE))

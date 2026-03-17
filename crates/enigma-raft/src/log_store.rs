@@ -66,6 +66,7 @@ impl SqliteLogStore {
         })
     }
 
+    #[allow(clippy::result_large_err)]
     fn get_state_value(&self, key: &str) -> Result<Option<String>, StorageError<u64>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -81,6 +82,7 @@ impl SqliteLogStore {
         Ok(rows.next().and_then(|r| r.ok()))
     }
 
+    #[allow(clippy::result_large_err)]
     fn set_state_value(&self, key: &str, value: &str) -> Result<(), StorageError<u64>> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -94,6 +96,7 @@ impl SqliteLogStore {
     }
 }
 
+#[allow(clippy::result_large_err)]
 impl RaftLogStorage<TypeConfig> for SqliteLogStore {
     type LogReader = Self;
 
@@ -130,7 +133,8 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
             Some(path) => {
                 let conn = rusqlite::Connection::open_with_flags(
                     path,
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
                 )
                 .expect("Failed to open log reader connection");
                 Self {

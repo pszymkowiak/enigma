@@ -133,9 +133,8 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
         openraft::error::StreamingError<TypeConfig, openraft::error::Fatal<u64>>,
     > {
         // Serialize metadata (vote + snapshot meta) as JSON
-        let meta_json = serde_json::to_vec(&(&vote, &snapshot.meta)).map_err(|e| {
-            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
-        })?;
+        let meta_json = serde_json::to_vec(&(&vote, &snapshot.meta))
+            .map_err(|e| openraft::error::StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         let db_bytes = snapshot.snapshot.into_inner();
 
@@ -149,26 +148,24 @@ impl RaftNetwork<TypeConfig> for EnigmaNetwork {
         // Split into 1MB chunks for streaming
         let chunks: Vec<crate::proto::SnapshotChunk> = payload
             .chunks(1_048_576)
-            .map(|c| crate::proto::SnapshotChunk {
-                data: c.to_vec(),
-            })
+            .map(|c| crate::proto::SnapshotChunk { data: c.to_vec() })
             .collect();
 
         let mut client = self.client().await.map_err(|e| match e {
             RPCError::Unreachable(u) => openraft::error::StreamingError::Unreachable(u),
             _ => openraft::error::StreamingError::Unreachable(Unreachable::new(
-                &std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")),
+                &std::io::Error::other(format!("{e}")),
             )),
         })?;
 
         let stream = futures::stream::iter(chunks);
-        let resp = client.install_snapshot(stream).await.map_err(|e| {
-            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
-        })?;
+        let resp = client
+            .install_snapshot(stream)
+            .await
+            .map_err(|e| openraft::error::StreamingError::Unreachable(Unreachable::new(&e)))?;
 
         let data = resp.into_inner().data;
-        serde_json::from_slice(&data).map_err(|e| {
-            openraft::error::StreamingError::Unreachable(Unreachable::new(&e))
-        })
+        serde_json::from_slice(&data)
+            .map_err(|e| openraft::error::StreamingError::Unreachable(Unreachable::new(&e)))
     }
 }

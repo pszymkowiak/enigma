@@ -2,8 +2,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use openraft::{BasicNode, Snapshot, SnapshotMeta, Vote};
-use tonic::{Request, Response, Status};
 use tokio_stream::StreamExt;
+use tonic::{Request, Response, Status};
 
 use crate::EnigmaRaft;
 use crate::proto::raft_service_server::RaftService;
@@ -82,8 +82,7 @@ impl RaftService for EnigmaRaftGrpcServer {
             return Err(Status::invalid_argument("Snapshot payload too short"));
         }
 
-        let meta_len =
-            u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
+        let meta_len = u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
 
         if payload.len() < 8 + meta_len {
             return Err(Status::invalid_argument("Snapshot metadata truncated"));
@@ -113,8 +112,7 @@ impl RaftService for EnigmaRaftGrpcServer {
             .await
             .map_err(|e| Status::internal(format!("install_full_snapshot failed: {e}")))?;
 
-        let data =
-            serde_json::to_vec(&resp).map_err(|e| Status::internal(e.to_string()))?;
+        let data = serde_json::to_vec(&resp).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(ProtoSnapshotResp { data }))
     }

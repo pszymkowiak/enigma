@@ -17,8 +17,8 @@ pub fn run(base_dir: &Path) -> Result<()> {
     }
 
     println!(
-        "{:<38} {:<12} {:<8} {:>12} {:>8} {}",
-        "ID", "STATUS", "FILES", "SIZE", "CHUNKS", "CREATED"
+        "{:<38} {:<12} {:<8} {:>12} {:>8} CREATED",
+        "ID", "STATUS", "FILES", "SIZE", "CHUNKS"
     );
     println!("{}", "-".repeat(100));
 

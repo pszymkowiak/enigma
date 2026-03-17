@@ -190,16 +190,11 @@ impl Default for ChunkStrategy {
 }
 
 /// Distribution strategy.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum DistributionStrategy {
+    #[default]
     RoundRobin,
     Weighted,
-}
-
-impl Default for DistributionStrategy {
-    fn default() -> Self {
-        DistributionStrategy::RoundRobin
-    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

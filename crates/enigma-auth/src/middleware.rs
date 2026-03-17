@@ -83,10 +83,7 @@ where
     }
 }
 
-pub fn require_permission(
-    user: &AuthUser,
-    permission: &str,
-) -> Result<(), AuthError> {
+pub fn require_permission(user: &AuthUser, permission: &str) -> Result<(), AuthError> {
     if has_permission(&user.permissions, permission) {
         Ok(())
     } else {
