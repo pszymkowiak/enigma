@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::Path;
 
 use enigma_core::config::EnigmaConfig;
@@ -28,17 +29,17 @@ pub async fn run(base_dir: &Path, dry_run: bool) -> Result<()> {
         orphan_replicas.len()
     );
 
-    // Collect all storage locations to delete (primary + replicas)
+    // Collect all storage locations to delete (primary + replicas), deduped via HashSet
+    let mut seen: HashSet<(i64, String)> = HashSet::new();
     let mut all_deletions: Vec<(String, i64, String)> = Vec::new();
     for (hash, provider_id, storage_key) in &orphans {
-        all_deletions.push((hash.clone(), *provider_id, storage_key.clone()));
+        if seen.insert((*provider_id, storage_key.clone())) {
+            all_deletions.push((hash.clone(), *provider_id, storage_key.clone()));
+        }
         // Also gather replicas for this orphan chunk
         if let Ok(replicas) = db.get_chunk_replicas(hash) {
             for (pid, skey) in replicas {
-                if !all_deletions
-                    .iter()
-                    .any(|(_, p, s)| *p == pid && *s == skey)
-                {
+                if seen.insert((pid, skey.clone())) {
                     all_deletions.push((hash.clone(), pid, skey));
                 }
             }
@@ -46,10 +47,7 @@ pub async fn run(base_dir: &Path, dry_run: bool) -> Result<()> {
     }
     // Add standalone orphan replicas
     for (hash, pid, skey) in &orphan_replicas {
-        if !all_deletions
-            .iter()
-            .any(|(_, p, s)| *p == *pid && *s == *skey)
-        {
+        if seen.insert((*pid, skey.clone())) {
             all_deletions.push((hash.clone(), *pid, skey.clone()));
         }
     }

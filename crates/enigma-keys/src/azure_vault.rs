@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use azure_identity::AzureCliCredential;
 use azure_security_keyvault_secrets::models::SetSecretParameters;
 use azure_security_keyvault_secrets::{ResourceExt, SecretClient};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use futures::TryStreamExt;
 use rand::RngCore;
 use rand::rngs::OsRng;
@@ -48,7 +49,7 @@ impl AzureKeyVaultProvider {
 
     /// Store a 32-byte key in the vault.
     async fn store_key(&self, key_id: &str, key_bytes: &[u8; 32]) -> anyhow::Result<String> {
-        let encoded = base64_encode(key_bytes);
+        let encoded = BASE64.encode(key_bytes);
         let name = self.secret_name(key_id);
 
         let mut tags = HashMap::new();
@@ -94,7 +95,7 @@ impl AzureKeyVaultProvider {
             .value
             .ok_or_else(|| anyhow::anyhow!("Secret {name} has no value"))?;
 
-        let key_bytes = base64_decode(&value)?;
+        let key_bytes = BASE64.decode(&value)?;
         if key_bytes.len() != 32 {
             anyhow::bail!("Secret {name}: expected 32 bytes, got {}", key_bytes.len());
         }
@@ -211,61 +212,4 @@ impl KeyProvider for AzureKeyVaultProvider {
 
         Ok(ids)
     }
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[((n >> 18) & 63) as usize] as char);
-        result.push(CHARS[((n >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[((n >> 6) & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(n & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
-}
-
-fn base64_decode(s: &str) -> anyhow::Result<Vec<u8>> {
-    fn val(c: u8) -> anyhow::Result<u32> {
-        match c {
-            b'A'..=b'Z' => Ok((c - b'A') as u32),
-            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            b'=' => Ok(0),
-            _ => anyhow::bail!("invalid base64 char: {c}"),
-        }
-    }
-    let bytes = s.as_bytes();
-    let mut result = Vec::new();
-    for chunk in bytes.chunks(4) {
-        if chunk.len() < 4 {
-            break;
-        }
-        let n = (val(chunk[0])? << 18)
-            | (val(chunk[1])? << 12)
-            | (val(chunk[2])? << 6)
-            | val(chunk[3])?;
-        result.push(((n >> 16) & 0xFF) as u8);
-        if chunk[2] != b'=' {
-            result.push(((n >> 8) & 0xFF) as u8);
-        }
-        if chunk[3] != b'=' {
-            result.push((n & 0xFF) as u8);
-        }
-    }
-    Ok(result)
 }

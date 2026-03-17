@@ -19,10 +19,14 @@ pub trait StorageProvider: Send + Sync {
     async fn chunk_exists(&self, key: &str) -> anyhow::Result<bool>;
 
     /// Upload manifest data.
-    async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()>;
+    async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
+        self.upload_chunk(MANIFEST_KEY, data).await
+    }
 
     /// Download manifest data.
-    async fn download_manifest(&self) -> anyhow::Result<Vec<u8>>;
+    async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
+        self.download_chunk(MANIFEST_KEY).await
+    }
 
     /// Test connectivity.
     async fn test_connection(&self) -> anyhow::Result<()>;

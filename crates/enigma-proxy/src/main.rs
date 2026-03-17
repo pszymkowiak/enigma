@@ -196,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("enigma=info".parse().unwrap()),
+                .add_directive("enigma=info".parse().expect("hardcoded directive")),
         )
         .init();
 
@@ -253,23 +253,37 @@ async fn main() -> anyhow::Result<()> {
     // Initialize storage providers
     let mut storage_providers: HashMap<i64, Box<dyn StorageProvider>> = HashMap::new();
 
+    // Cache existing providers list once — avoids repeated lock acquisitions per provider
+    let mut cached_providers = shared_db
+        .lock()
+        .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+        .list_providers()?;
+
     for pc in &proxy_config.providers {
-        let existing = shared_db
-            .lock()
-            .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
-            .list_providers()?;
-        let pid = match existing.iter().find(|p| p.name == pc.name) {
+        let pid = match cached_providers.iter().find(|p| p.name == pc.name) {
             Some(p) => p.id,
-            None => shared_db
-                .lock()
-                .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
-                .insert_provider(
-                    &pc.name,
-                    pc.provider_type,
-                    &pc.bucket,
-                    pc.region.as_deref(),
-                    pc.weight,
-                )?,
+            None => {
+                let new_id = shared_db
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+                    .insert_provider(
+                        &pc.name,
+                        pc.provider_type,
+                        &pc.bucket,
+                        pc.region.as_deref(),
+                        pc.weight,
+                    )?;
+                // Update cache so subsequent iterations see the new provider
+                cached_providers.push(enigma_core::types::ProviderInfo {
+                    id: new_id,
+                    name: pc.name.clone(),
+                    provider_type: pc.provider_type,
+                    bucket: pc.bucket.clone(),
+                    region: pc.region.clone(),
+                    weight: pc.weight,
+                });
+                new_id
+            }
         };
 
         let provider: Box<dyn StorageProvider> = match pc.provider_type {
@@ -327,10 +341,8 @@ async fn main() -> anyhow::Result<()> {
         storage_providers.insert(pid, provider);
     }
 
-    let provider_infos = shared_db
-        .lock()
-        .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
-        .list_providers()?;
+    #[allow(unused_mut)]
+    let mut provider_infos = cached_providers;
 
     // If no providers are loaded, re-create them from DB entries or create a local fallback
     if storage_providers.is_empty() {
@@ -354,6 +366,15 @@ async fn main() -> anyhow::Result<()> {
             let provider =
                 enigma_storage::local::LocalStorageProvider::new(&local_path, "local-default")?;
             storage_providers.insert(pid, Box::new(provider));
+            // Update cached provider list so distributor sees the new provider
+            provider_infos.push(enigma_core::types::ProviderInfo {
+                id: pid,
+                name: "local-default".to_string(),
+                provider_type: ProviderType::Local,
+                bucket: local_path.to_str().unwrap_or("").to_string(),
+                region: None,
+                weight: 1,
+            });
             tracing::info!(
                 "No providers configured, using local fallback at {}",
                 local_path.display()
@@ -379,12 +400,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let provider_infos = shared_db
-        .lock()
-        .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
-        .list_providers()?;
-
-    // Setup distributor
+    // Setup distributor (reuse cached provider_infos — no extra DB lock needed)
     let distributor = match proxy_config.enigma.distribution {
         DistributionStrategy::RoundRobin => Distributor::round_robin(provider_infos)?,
         DistributionStrategy::Weighted => Distributor::weighted(provider_infos)?,
@@ -433,8 +449,7 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .is_some_and(|rc| !rc.is_single_node());
 
-    if is_multi_node {
-        let raft_config = proxy_config.raft.as_ref().unwrap();
+    if let Some(raft_config) = proxy_config.raft.as_ref().filter(|_| is_multi_node) {
         let node_id = raft_config.node_id;
 
         // ── Recovery mode ────────────────────────────────────
@@ -608,11 +623,12 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             });
                             web_handle = Some((handle, shutdown_tx));
-                        } else if !is_leader && web_handle.is_some() {
-                            tracing::info!("Lost leadership — stopping web UI");
-                            let (handle, tx) = web_handle.take().unwrap();
-                            let _ = tx.send(());
-                            let _ = handle.await;
+                        } else if !is_leader {
+                            if let Some((handle, tx)) = web_handle.take() {
+                                tracing::info!("Lost leadership — stopping web UI");
+                                let _ = tx.send(());
+                                let _ = handle.await;
+                            }
                         }
                     }
 
@@ -656,10 +672,7 @@ async fn main() -> anyhow::Result<()> {
     // Start HTTP/HTTPS server (runs in all modes: single-node and multi-node)
     let addr: SocketAddr = proxy_config.s3_proxy.listen_addr.parse()?;
     tracing::info!("Starting Enigma S3 proxy on {addr}");
-    tracing::info!(
-        "  Access key: {}***",
-        &proxy_config.s3_proxy.access_key[..4.min(proxy_config.s3_proxy.access_key.len())]
-    );
+    tracing::info!("  S3 auth: configured");
     tracing::info!("  Region: {}", proxy_config.s3_proxy.default_region);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

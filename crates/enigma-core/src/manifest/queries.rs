@@ -1,4 +1,5 @@
 use rusqlite::{Connection, params};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -37,6 +38,20 @@ impl ManifestDb {
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Begin an explicit SQLite transaction for batched writes.
+    pub fn begin_transaction(&self) -> Result<()> {
+        self.conn
+            .execute_batch("BEGIN TRANSACTION")
+            .map_err(EnigmaError::Database)
+    }
+
+    /// Commit the current SQLite transaction.
+    pub fn commit_transaction(&self) -> Result<()> {
+        self.conn
+            .execute_batch("COMMIT")
+            .map_err(EnigmaError::Database)
     }
 
     // ── Providers ──────────────────────────────────────────────
@@ -370,10 +385,12 @@ impl ManifestDb {
         if let Some(Ok(primary)) = rows.next() {
             // Collect all replica locations before deleting
             let replicas = self.get_chunk_replicas(hash)?;
+            let mut seen_pids: HashSet<i64> = HashSet::new();
+            seen_pids.insert(primary.0);
             let mut all_locations = vec![primary];
             for (pid, skey) in replicas {
                 // Avoid duplicating the primary
-                if !all_locations.iter().any(|(id, _)| *id == pid) {
+                if seen_pids.insert(pid) {
                     all_locations.push((pid, skey));
                 }
             }

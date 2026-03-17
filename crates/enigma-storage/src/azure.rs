@@ -4,7 +4,7 @@ mod inner {
     use azure_storage::StorageCredentials;
     use azure_storage_blobs::prelude::*;
 
-    use crate::provider::{MANIFEST_KEY, StorageProvider};
+    use crate::provider::StorageProvider;
 
     /// Azure Blob Storage provider.
     pub struct AzureStorageProvider {
@@ -81,14 +81,6 @@ mod inner {
                     }
                 }
             }
-        }
-
-        async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
-            self.upload_chunk(MANIFEST_KEY, data).await
-        }
-
-        async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
-            self.download_chunk(MANIFEST_KEY).await
         }
 
         async fn test_connection(&self) -> anyhow::Result<()> {

@@ -171,18 +171,19 @@ async fn run_backup_inner(
         let file_size = metadata.len();
         total_bytes += file_size;
 
-        // Compute file hash
-        let file_hash = {
-            use sha2::{Digest, Sha256};
-            let data = std::fs::read(file_path)?;
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            format!("{:x}", hasher.finalize())
-        };
-
         // Chunk the file
         let chunks = chunk_engine.chunk_file(file_path)?;
         let chunk_count = chunks.len() as u32;
+
+        // Compute file hash from chunks (avoids reading the file twice)
+        let file_hash = {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            for chunk in &chunks {
+                hasher.update(&chunk.data);
+            }
+            format!("{:x}", hasher.finalize())
+        };
 
         // Insert file record
         let mtime = metadata.modified().ok().and_then(|t| {
@@ -199,8 +200,9 @@ async fn run_backup_inner(
             chunk_count,
         )?;
 
-        // Process each chunk
+        // Process each chunk (batched in a transaction for performance)
         let compression = &config.enigma.compression;
+        db.begin_transaction()?;
         for (idx, chunk) in chunks.iter().enumerate() {
             let hash_hex = chunk.hash.to_hex();
             total_chunks += 1;
@@ -238,21 +240,32 @@ async fn run_backup_inner(
             )?;
 
             if is_new {
-                // Upload to all target providers
-                for target in &targets {
-                    if let Some(provider) = storage_providers.get(&target.id) {
-                        match provider
-                            .upload_chunk(&storage_key, &encrypted.ciphertext)
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(e) if target.id == primary.id => return Err(e),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Replica upload to provider {} failed: {e}",
-                                    target.id
-                                );
-                            }
+                // Upload to all target providers concurrently
+                let upload_futures: Vec<(i64, _)> = targets
+                    .iter()
+                    .filter_map(|target| {
+                        storage_providers.get(&target.id).map(|provider| {
+                            (
+                                target.id,
+                                provider.upload_chunk(&storage_key, &encrypted.ciphertext),
+                            )
+                        })
+                    })
+                    .collect();
+
+                let ids: Vec<i64> = upload_futures.iter().map(|(id, _)| *id).collect();
+                let futures_only: Vec<_> = upload_futures.into_iter().map(|(_, fut)| fut).collect();
+                let results = futures::future::join_all(futures_only).await;
+
+                for (provider_id, result) in ids.into_iter().zip(results) {
+                    match result {
+                        Ok(_) => {}
+                        Err(e) if provider_id == primary.id => return Err(e),
+                        Err(e) => {
+                            tracing::warn!(
+                                "Replica upload to provider {} failed: {e}",
+                                provider_id
+                            );
                         }
                     }
                 }
@@ -271,6 +284,7 @@ async fn run_backup_inner(
             // Record file-chunk mapping
             db.insert_file_chunk(file_id, &hash_hex, idx as u32, chunk.offset)?;
         }
+        db.commit_transaction()?;
 
         pb.inc(1);
     }
