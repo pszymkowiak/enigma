@@ -87,7 +87,11 @@ impl RaftService for EnigmaRaftGrpcServer {
             return Err(Status::invalid_argument("Snapshot payload too short"));
         }
 
-        let meta_len = u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
+        let meta_len = u64::from_le_bytes(
+            payload[0..8]
+                .try_into()
+                .map_err(|_| Status::invalid_argument("Invalid metadata length encoding"))?,
+        ) as usize;
 
         if payload.len() < 8 + meta_len {
             return Err(Status::invalid_argument("Snapshot metadata truncated"));
