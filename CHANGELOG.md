@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.3](https://github.com/pszymkowiak/enigma/compare/enigma-v0.1.2...enigma-v0.1.3) (2026-03-17)
+
+
+### Bug Fixes
+
+* release asset upload skipped — event_name is caller's not workflow_call ([#7](https://github.com/pszymkowiak/enigma/issues/7)) ([a81291b](https://github.com/pszymkowiak/enigma/commit/a81291bea4a2b9d979d5acb911f991bb0444b016))
+* replace unwrap with error handling in gRPC snapshot parser ([#10](https://github.com/pszymkowiak/enigma/issues/10)) ([bd0fd9f](https://github.com/pszymkowiak/enigma/commit/bd0fd9f971a167c05cca027d09e4c4c3339d8acd))
+* round 1 — performance, dedup removal, security hardening, optimizations ([#9](https://github.com/pszymkowiak/enigma/issues/9)) ([50bc6c1](https://github.com/pszymkowiak/enigma/commit/50bc6c1d23ddc6914c8d9dfa4080ece3d67db7e3))
+
 ## [0.1.2](https://github.com/pszymkowiak/enigma/compare/enigma-v0.1.1...enigma-v0.1.2) (2026-03-17)
 
 
