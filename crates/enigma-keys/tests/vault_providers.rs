@@ -8,6 +8,7 @@
 ///
 ///   GCP_PROJECT_ID=eastern-rider-263712 \
 ///   cargo test -p enigma-keys --features gcp-secretmanager --test vault_providers -- --nocapture
+#[allow(unused_imports)]
 use enigma_keys::provider::KeyProvider;
 
 #[cfg(feature = "azure-keyvault")]

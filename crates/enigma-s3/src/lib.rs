@@ -16,7 +16,7 @@ use enigma_storage::provider::StorageProvider;
 
 /// Shared state for the Enigma S3 service.
 pub struct EnigmaS3State {
-    pub db: Mutex<ManifestDb>,
+    pub db: Arc<Mutex<ManifestDb>>,
     pub providers: HashMap<i64, Box<dyn StorageProvider>>,
     pub distributor: Distributor,
     pub key_material: KeyMaterial,
