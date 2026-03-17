@@ -94,7 +94,10 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 #[async_trait]
 impl AuthStore for SqliteAuthStore {
     async fn migrate(&self) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute_batch(MIGRATE_SQL)?;
         Ok(())
     }
@@ -112,7 +115,10 @@ impl AuthStore for SqliteAuthStore {
         email: Option<&str>,
     ) -> Result<User, AuthError> {
         let id = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
             let id = uuid::Uuid::now_v7().to_string();
             conn.execute(
                 "INSERT INTO auth_users (id, username, email, password_hash) VALUES (?1, ?2, ?3, ?4)",
@@ -132,7 +138,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_user_by_id(&self, id: &str) -> Result<User, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.query_row(
             "SELECT id, username, email, is_active, created_at, updated_at FROM auth_users WHERE id = ?1",
             [id],
@@ -154,7 +163,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_user_by_username(&self, username: &str) -> Result<User, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.query_row(
             "SELECT id, username, email, is_active, created_at, updated_at FROM auth_users WHERE username = ?1",
             [username],
@@ -176,7 +188,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_users(&self) -> Result<Vec<User>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT id, username, email, is_active, created_at, updated_at FROM auth_users ORDER BY created_at",
         )?;
@@ -197,7 +212,10 @@ impl AuthStore for SqliteAuthStore {
 
     async fn update_user(&self, id: &str, req: &UpdateUserRequest) -> Result<User, AuthError> {
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
             if let Some(ref email) = req.email {
                 conn.execute(
                     "UPDATE auth_users SET email = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -215,7 +233,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn update_password(&self, id: &str, password_hash: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let changed = conn.execute(
             "UPDATE auth_users SET password_hash = ?1, updated_at = datetime('now') WHERE id = ?2",
             rusqlite::params![password_hash, id],
@@ -227,7 +248,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn delete_user(&self, id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let changed = conn.execute("DELETE FROM auth_users WHERE id = ?1", [id])?;
         if changed == 0 {
             return Err(AuthError::NotFound("user not found".into()));
@@ -236,7 +260,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_password_hash(&self, user_id: &str) -> Result<String, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.query_row(
             "SELECT password_hash FROM auth_users WHERE id = ?1",
             [user_id],
@@ -249,7 +276,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn user_count(&self) -> Result<u64, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let count: u64 = conn.query_row("SELECT COUNT(*) FROM auth_users", [], |row| row.get(0))?;
         Ok(count)
     }
@@ -263,7 +293,10 @@ impl AuthStore for SqliteAuthStore {
         is_system: bool,
     ) -> Result<Group, AuthError> {
         let id = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
             let id = uuid::Uuid::now_v7().to_string();
             conn.execute(
                 "INSERT INTO auth_groups (id, name, description, is_system) VALUES (?1, ?2, ?3, ?4)",
@@ -283,7 +316,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_group(&self, id: &str) -> Result<Group, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.query_row(
             "SELECT id, name, description, is_system, created_at FROM auth_groups WHERE id = ?1",
             [id],
@@ -304,7 +340,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_group_by_name(&self, name: &str) -> Result<Group, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.query_row(
             "SELECT id, name, description, is_system, created_at FROM auth_groups WHERE name = ?1",
             [name],
@@ -325,7 +364,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_groups(&self) -> Result<Vec<Group>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, description, is_system, created_at FROM auth_groups ORDER BY name",
         )?;
@@ -346,7 +388,10 @@ impl AuthStore for SqliteAuthStore {
     async fn update_group(&self, id: &str, req: &UpdateGroupRequest) -> Result<Group, AuthError> {
         {
             if let Some(ref desc) = req.description {
-                let conn = self.conn.lock().unwrap();
+                let conn = self
+                    .conn
+                    .lock()
+                    .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
                 let changed = conn.execute(
                     "UPDATE auth_groups SET description = ?1 WHERE id = ?2",
                     rusqlite::params![desc, id],
@@ -360,7 +405,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn delete_group(&self, id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         // Check system group
         let is_system: bool = conn
             .query_row(
@@ -389,7 +437,10 @@ impl AuthStore for SqliteAuthStore {
         group_id: &str,
         permission_id: &str,
     ) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "INSERT OR IGNORE INTO auth_group_permissions (group_id, permission_id) VALUES (?1, ?2)",
             rusqlite::params![group_id, permission_id],
@@ -402,7 +453,10 @@ impl AuthStore for SqliteAuthStore {
         group_id: &str,
         permission_id: &str,
     ) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "DELETE FROM auth_group_permissions WHERE group_id = ?1 AND permission_id = ?2",
             rusqlite::params![group_id, permission_id],
@@ -411,7 +465,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_group_permissions(&self, group_id: &str) -> Result<Vec<Permission>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT p.id, p.action, p.description, p.created_at
              FROM auth_permissions p
@@ -435,7 +492,10 @@ impl AuthStore for SqliteAuthStore {
     // --- User-Group ---
 
     async fn add_user_group(&self, user_id: &str, group_id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "INSERT OR IGNORE INTO auth_user_groups (user_id, group_id) VALUES (?1, ?2)",
             rusqlite::params![user_id, group_id],
@@ -444,7 +504,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn remove_user_group(&self, user_id: &str, group_id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "DELETE FROM auth_user_groups WHERE user_id = ?1 AND group_id = ?2",
             rusqlite::params![user_id, group_id],
@@ -453,7 +516,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_user_groups(&self, user_id: &str) -> Result<Vec<Group>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT g.id, g.name, g.description, g.is_system, g.created_at
              FROM auth_groups g
@@ -476,7 +542,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn get_user_permissions(&self, user_id: &str) -> Result<Vec<String>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT DISTINCT p.action
              FROM auth_permissions p
@@ -502,7 +571,10 @@ impl AuthStore for SqliteAuthStore {
         scopes: &str,
         expires_at: Option<&str>,
     ) -> Result<ApiToken, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let id = uuid::Uuid::now_v7().to_string();
         conn.execute(
             "INSERT INTO auth_api_tokens (id, user_id, name, token_hash, token_prefix, scopes, expires_at)
@@ -530,7 +602,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn verify_token(&self, token_hash: &str) -> Result<(ApiToken, User), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let result = conn.query_row(
             "SELECT t.id, t.user_id, t.name, t.token_prefix, t.scopes, t.expires_at, t.last_used_at, t.created_at,
                     u.id, u.username, u.email, u.is_active, u.created_at, u.updated_at
@@ -583,7 +658,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_tokens(&self, user_id: &str) -> Result<Vec<ApiToken>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT id, user_id, name, token_prefix, scopes, expires_at, last_used_at, created_at
              FROM auth_api_tokens WHERE user_id = ?1 ORDER BY created_at DESC",
@@ -606,7 +684,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn revoke_token(&self, id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let changed = conn.execute("DELETE FROM auth_api_tokens WHERE id = ?1", [id])?;
         if changed == 0 {
             return Err(AuthError::NotFound("token not found".into()));
@@ -615,7 +696,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn touch_token(&self, id: &str) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "UPDATE auth_api_tokens SET last_used_at = datetime('now') WHERE id = ?1",
             [id],
@@ -626,7 +710,10 @@ impl AuthStore for SqliteAuthStore {
     // --- Permissions ---
 
     async fn list_permissions(&self) -> Result<Vec<Permission>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT id, action, description, created_at FROM auth_permissions ORDER BY action",
         )?;
@@ -648,7 +735,10 @@ impl AuthStore for SqliteAuthStore {
         action: &str,
         description: &str,
     ) -> Result<Permission, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let id = uuid::Uuid::now_v7().to_string();
         conn.execute(
             "INSERT OR IGNORE INTO auth_permissions (id, action, description) VALUES (?1, ?2, ?3)",
@@ -679,7 +769,10 @@ impl AuthStore for SqliteAuthStore {
         target: Option<&str>,
         ip_addr: Option<&str>,
     ) -> Result<(), AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         conn.execute(
             "INSERT INTO auth_audit_log (user_id, action, target, ip_addr) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![user_id, action, target, ip_addr],
@@ -688,7 +781,10 @@ impl AuthStore for SqliteAuthStore {
     }
 
     async fn list_audit(&self, limit: u32, offset: u32) -> Result<Vec<AuditEntry>, AuthError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuthError::Database(format!("Lock poisoned: {e}")))?;
         let mut stmt = conn.prepare(
             "SELECT id, user_id, action, target, ip_addr, created_at
              FROM auth_audit_log ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",

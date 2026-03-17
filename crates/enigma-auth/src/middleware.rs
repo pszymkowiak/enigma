@@ -55,7 +55,9 @@ where
             let store_clone = auth_state.auth_store.clone();
             let tid = api_token.id.clone();
             tokio::spawn(async move {
-                let _ = store_clone.touch_token(&tid).await;
+                if let Err(e) = store_clone.touch_token(&tid).await {
+                    tracing::warn!("Failed to update token last_used_at: {e}");
+                }
             });
             let permissions = store.get_user_permissions(&user.id).await?;
             let groups: Vec<String> = store

@@ -22,6 +22,11 @@ pub fn create_jwt(
     permissions: Vec<String>,
     secret: &str,
 ) -> Result<String, AuthError> {
+    if secret.len() < 32 {
+        return Err(AuthError::InvalidInput(
+            "JWT secret must be at least 32 bytes".to_string(),
+        ));
+    }
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = AuthClaims {
         sub: user_id.to_string(),
@@ -41,6 +46,11 @@ pub fn create_jwt(
 }
 
 pub fn verify_jwt(token: &str, secret: &str) -> Result<AuthClaims, AuthError> {
+    if secret.len() < 32 {
+        return Err(AuthError::InvalidInput(
+            "JWT secret must be at least 32 bytes".to_string(),
+        ));
+    }
     let mut validation = Validation::default();
     validation.set_issuer(&["enigma"]);
     let data = decode::<AuthClaims>(
