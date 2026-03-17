@@ -25,11 +25,14 @@ impl EnigmaNetworkFactory {
     }
 
     pub fn add_peer(&self, id: u64, addr: String) {
-        self.peers.lock().unwrap().insert(id, addr);
+        self.peers
+            .lock()
+            .expect("peers mutex poisoned")
+            .insert(id, addr);
     }
 
     pub fn remove_peer(&self, id: u64) {
-        self.peers.lock().unwrap().remove(&id);
+        self.peers.lock().expect("peers mutex poisoned").remove(&id);
     }
 }
 
@@ -38,18 +41,23 @@ impl RaftNetworkFactory<TypeConfig> for EnigmaNetworkFactory {
 
     async fn new_client(&mut self, target: u64, _node: &BasicNode) -> Self::Network {
         let addr = {
-            let peers = self.peers.lock().unwrap();
+            let peers = self.peers.lock().expect("peers mutex poisoned");
             peers.get(&target).cloned().unwrap_or_default()
         };
-        EnigmaNetwork { target, addr }
+        EnigmaNetwork {
+            target,
+            addr,
+            client: tokio::sync::Mutex::new(None),
+        }
     }
 }
 
-/// A gRPC client to a single Raft peer.
+/// A gRPC client to a single Raft peer, with cached connection.
 pub struct EnigmaNetwork {
     #[allow(dead_code)]
     target: u64,
     addr: String,
+    client: tokio::sync::Mutex<Option<RaftServiceClient<tonic::transport::Channel>>>,
 }
 
 impl EnigmaNetwork {
@@ -59,10 +67,16 @@ impl EnigmaNetwork {
         RaftServiceClient<tonic::transport::Channel>,
         RPCError<u64, BasicNode, RaftError<u64>>,
     > {
+        let mut cached = self.client.lock().await;
+        if let Some(client) = cached.as_ref() {
+            return Ok(client.clone());
+        }
         let endpoint = format!("http://{}", self.addr);
-        RaftServiceClient::connect(endpoint)
+        let client = RaftServiceClient::connect(endpoint)
             .await
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))
+            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        *cached = Some(client.clone());
+        Ok(client)
     }
 }
 

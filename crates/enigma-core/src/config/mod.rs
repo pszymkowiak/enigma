@@ -117,14 +117,22 @@ impl EnigmaConfig {
         toml::from_str(&content).map_err(|e| EnigmaError::TomlDe(e.to_string()))
     }
 
-    /// Save config to a TOML file.
+    /// Save config to a TOML file. On Unix, sets permissions to 0o600 (owner-only).
     pub fn save(&self, path: &Path) -> Result<()> {
         let content =
             toml::to_string_pretty(self).map_err(|e| EnigmaError::TomlSer(e.to_string()))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, content)?;
+        std::fs::write(path, &content)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms)?;
+        }
+
         Ok(())
     }
 

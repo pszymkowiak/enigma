@@ -1,6 +1,6 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
 use async_trait::async_trait;
 use hkdf::Hkdf;
 use ml_kem::kem::Encapsulate;
@@ -33,7 +33,7 @@ pub struct LocalKeyProvider {
     keystore: KeyStore,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct KeyStore {
     /// Version for forward compatibility.
     version: u32,
@@ -52,7 +52,20 @@ struct KeyStore {
     keys: Vec<StoredKey>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl std::fmt::Debug for KeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyStore")
+            .field("version", &self.version)
+            .field("salt", &"[REDACTED]")
+            .field("ml_kem_ek", &format!("[{}B]", self.ml_kem_ek.len()))
+            .field("ml_kem_dk", &"[REDACTED]")
+            .field("current_key_id", &self.current_key_id)
+            .field("keys", &self.keys)
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct StoredKey {
     id: String,
     /// The final 32-byte hybrid-derived encryption key.
@@ -63,85 +76,47 @@ struct StoredKey {
     created_at: String,
 }
 
+impl std::fmt::Debug for StoredKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredKey")
+            .field("id", &self.id)
+            .field("key", &"[REDACTED]")
+            .field("ml_kem_ek", &format!("[{}B]", self.ml_kem_ct.len()))
+            .field("ml_kem_dk", &"[REDACTED]")
+            .field("ml_kem_ct", &format!("[{}B]", self.ml_kem_ct.len()))
+            .finish()
+    }
+}
+
 /// Serde helper for Vec<u8> as base64.
 mod base64_bytes {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
-        let encoded = base64_encode(bytes);
+        let encoded = STANDARD.encode(bytes);
         encoded.serialize(s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         use serde::de::Error;
         let s = String::deserialize(d)?;
-        base64_decode(&s).map_err(D::Error::custom)
+        STANDARD.decode(&s).map_err(D::Error::custom)
     }
+}
 
-    fn base64_encode(data: &[u8]) -> String {
-        // Simple base64 encoding without external crate
-        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut result = String::new();
-        for chunk in data.chunks(3) {
-            let b0 = chunk[0] as u32;
-            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-            let n = (b0 << 16) | (b1 << 8) | b2;
-            result.push(CHARS[((n >> 18) & 63) as usize] as char);
-            result.push(CHARS[((n >> 12) & 63) as usize] as char);
-            if chunk.len() > 1 {
-                result.push(CHARS[((n >> 6) & 63) as usize] as char);
-            } else {
-                result.push('=');
-            }
-            if chunk.len() > 2 {
-                result.push(CHARS[(n & 63) as usize] as char);
-            } else {
-                result.push('=');
-            }
-        }
-        result
-    }
-
-    fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
-        fn val(c: u8) -> Result<u32, String> {
-            match c {
-                b'A'..=b'Z' => Ok((c - b'A') as u32),
-                b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
-                b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
-                b'+' => Ok(62),
-                b'/' => Ok(63),
-                b'=' => Ok(0),
-                _ => Err(format!("invalid base64 char: {c}")),
-            }
-        }
-        let bytes = s.as_bytes();
-        let mut result = Vec::new();
-        for chunk in bytes.chunks(4) {
-            if chunk.len() < 4 {
-                break;
-            }
-            let n = (val(chunk[0])? << 18)
-                | (val(chunk[1])? << 12)
-                | (val(chunk[2])? << 6)
-                | val(chunk[3])?;
-            result.push(((n >> 16) & 0xFF) as u8);
-            if chunk[2] != b'=' {
-                result.push(((n >> 8) & 0xFF) as u8);
-            }
-            if chunk[3] != b'=' {
-                result.push((n & 0xFF) as u8);
-            }
-        }
-        Ok(result)
-    }
+/// Build hardened Argon2id instance: 64 MiB memory, 3 iterations, 4 lanes, 32-byte output.
+fn hardened_argon2() -> Argon2<'static> {
+    let params = Params::new(65536, 3, 4, Some(32)).expect("valid argon2 params");
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
 }
 
 impl LocalKeyProvider {
     /// Derive a master key from passphrase using Argon2id.
     fn derive_master_key(passphrase: &[u8], salt: &[u8; 32]) -> anyhow::Result<[u8; 32]> {
         let mut key = [0u8; 32];
-        Argon2::default()
+        hardened_argon2()
             .hash_password_into(passphrase, salt, &mut key)
             .map_err(|e| anyhow::anyhow!("Argon2id key derivation failed: {e}"))?;
         Ok(key)
@@ -169,7 +144,7 @@ impl LocalKeyProvider {
 
     /// Encrypt the keystore to bytes.
     fn encrypt_keystore(keystore: &KeyStore, master_key: &[u8; 32]) -> anyhow::Result<Vec<u8>> {
-        let plaintext = serde_json::to_vec(keystore)?;
+        let plaintext = zeroize::Zeroizing::new(serde_json::to_vec(keystore)?);
         let cipher = Aes256Gcm::new_from_slice(master_key)
             .map_err(|e| anyhow::anyhow!("Invalid master key: {e}"))?;
 
@@ -204,21 +179,30 @@ impl LocalKeyProvider {
             .map_err(|e| anyhow::anyhow!("Invalid master key: {e}"))?;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| anyhow::anyhow!("Wrong passphrase or corrupted keyfile"))?;
+        let decrypted = zeroize::Zeroizing::new(
+            cipher
+                .decrypt(nonce, ciphertext)
+                .map_err(|_| anyhow::anyhow!("Wrong passphrase or corrupted keyfile"))?,
+        );
 
-        let keystore: KeyStore = serde_json::from_slice(&plaintext)?;
+        let keystore: KeyStore = serde_json::from_slice(&decrypted)?;
         Ok((keystore, master_key))
     }
 
-    /// Save the keystore to disk (encrypted).
+    /// Save the keystore to disk (encrypted) using atomic write.
     fn save(&self) -> anyhow::Result<()> {
-        let data = Self::encrypt_keystore(&self.keystore, &self.master_key)?;
+        let encrypted = Self::encrypt_keystore(&self.keystore, &self.master_key)?;
         if let Some(parent) = self.keyfile_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.keyfile_path, data)?;
+        let tmp_path = self.keyfile_path.with_extension("tmp");
+        std::fs::write(&tmp_path, &encrypted)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&tmp_path, &self.keyfile_path)?;
         Ok(())
     }
 
@@ -231,7 +215,9 @@ impl LocalKeyProvider {
         let ek = Ek768::from_bytes(&ek_array);
 
         // Encapsulate: produces (ciphertext, shared_secret)
-        let (ct, shared_secret) = ek.encapsulate(&mut OsRng).unwrap();
+        let (ct, shared_secret) = ek
+            .encapsulate(&mut OsRng)
+            .map_err(|_| anyhow::anyhow!("ML-KEM encapsulation failed"))?;
 
         // Derive hybrid key: HKDF(passphrase_key || kem_shared_secret)
         let hybrid_key = Self::derive_hybrid_key(
@@ -255,6 +241,10 @@ impl LocalKeyProvider {
 
     /// Create a new local key provider with a fresh keyfile and ML-KEM-768 keypair.
     pub fn create(keyfile_path: &Path, passphrase: &[u8]) -> anyhow::Result<Self> {
+        if passphrase.is_empty() {
+            anyhow::bail!("passphrase must not be empty");
+        }
+
         let mut salt = [0u8; 32];
         OsRng.fill_bytes(&mut salt);
 
@@ -464,5 +454,14 @@ mod tests {
         // ML-KEM-768: ek = 1184 bytes, dk = 2400 bytes
         assert_eq!(ek_bytes.len(), 1184);
         assert_eq!(dk_bytes.len(), 2400);
+    }
+
+    #[tokio::test]
+    async fn empty_passphrase_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("keys.enc");
+        let result = LocalKeyProvider::create(&path, b"");
+        let err = result.err().expect("should fail for empty passphrase");
+        assert!(err.to_string().contains("passphrase must not be empty"));
     }
 }

@@ -25,7 +25,7 @@ pub struct WebConfig {
 }
 
 fn default_web_addr() -> String {
-    "0.0.0.0:9443".to_string()
+    "127.0.0.1:9443".to_string()
 }
 fn default_jwt_secret() -> String {
     "enigma-jwt-secret-change-me".to_string()

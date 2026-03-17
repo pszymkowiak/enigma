@@ -33,8 +33,14 @@ impl IntoResponse for AuthError {
             AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AuthError::Duplicate(msg) => (StatusCode::CONFLICT, msg.clone()),
             AuthError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            AuthError::Database(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            AuthError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AuthError::Database(msg) => {
+                tracing::error!("Database error: {msg}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
+            }
+            AuthError::Internal(msg) => {
+                tracing::error!("Internal error: {msg}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
+            }
         };
 
         let body = serde_json::json!({ "error": message });

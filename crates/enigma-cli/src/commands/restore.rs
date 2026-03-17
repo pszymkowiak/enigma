@@ -145,7 +145,10 @@ pub async fn run(
             let nonce_arr: [u8; 12] = nonce
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("Invalid nonce length"))?;
-            let hash_bytes: [u8; 32] = hex_decode(chunk_hash)?;
+            let hash_bytes: [u8; 32] = hex::decode(chunk_hash)
+                .map_err(|e| anyhow::anyhow!("hex decode error: {e}"))?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid hash length"))?;
             let encrypted = EncryptedChunk {
                 hash: ChunkHash(hash_bytes),
                 nonce: nonce_arr,
@@ -198,14 +201,4 @@ pub async fn run(
     println!("\nRestore completed: {} files", files.len());
 
     Ok(())
-}
-
-fn hex_decode(hex: &str) -> Result<[u8; 32]> {
-    let bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| anyhow::anyhow!("{e}")))
-        .collect::<Result<Vec<_>>>()?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid hash length"))
 }

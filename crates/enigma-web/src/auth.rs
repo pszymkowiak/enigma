@@ -6,6 +6,7 @@ use axum::response::Response;
 use axum::{Json, middleware::Next};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::state::AppState;
 
@@ -55,7 +56,17 @@ pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
-    if req.username != state.admin_user || req.password != state.admin_pass {
+    let user_match: bool = req
+        .username
+        .as_bytes()
+        .ct_eq(state.admin_user.as_bytes())
+        .into();
+    let pass_match: bool = req
+        .password
+        .as_bytes()
+        .ct_eq(state.admin_pass.as_bytes())
+        .into();
+    if !user_match || !pass_match {
         return Err(StatusCode::UNAUTHORIZED);
     }
 

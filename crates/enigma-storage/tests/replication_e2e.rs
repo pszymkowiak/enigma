@@ -174,7 +174,7 @@ async fn multicloud_azure_gcs_e2e() {
     ]);
 
     let provider_infos = db.list_providers().unwrap();
-    let distributor = Distributor::round_robin(provider_infos);
+    let distributor = Distributor::round_robin(provider_infos).unwrap();
 
     let key_material = make_key_material();
 

@@ -41,6 +41,10 @@ pub async fn handle_upload_part(
     part_number: i32,
     body: Option<StreamingBlob>,
 ) -> S3Result<S3Response<UploadPartOutput>> {
+    if !(1..=10000).contains(&part_number) {
+        return Err(s3_error!(InvalidArgument));
+    }
+
     let data = read_body(body).await?;
 
     // Compute MD5 for ETag (S3 convention for parts)

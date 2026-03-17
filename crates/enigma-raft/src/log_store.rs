@@ -23,6 +23,7 @@ impl SqliteLogStore {
         conn.execute_batch(
             "
             PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=FULL;
             PRAGMA foreign_keys=ON;
 
             CREATE TABLE IF NOT EXISTS raft_log (
@@ -68,7 +69,9 @@ impl SqliteLogStore {
 
     #[allow(clippy::result_large_err)]
     fn get_state_value(&self, key: &str) -> Result<Option<String>, StorageError<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
         let mut stmt = conn
             .prepare("SELECT value FROM raft_state WHERE key=?1")
             .map_err(|e| StorageError::IO {
@@ -84,7 +87,9 @@ impl SqliteLogStore {
 
     #[allow(clippy::result_large_err)]
     fn set_state_value(&self, key: &str, value: &str) -> Result<(), StorageError<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
         conn.execute(
             "INSERT OR REPLACE INTO raft_state (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
@@ -101,7 +106,9 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
     type LogReader = Self;
 
     async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
 
         // Get last log entry
         let last: Option<(u64, u64)> = conn
@@ -175,7 +182,9 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
         I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
         I::IntoIter: OptionalSend,
     {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
 
         for entry in entries {
             let data = serde_json::to_vec(&entry).map_err(|e| StorageError::IO {
@@ -198,7 +207,9 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
     }
 
     async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
         conn.execute(
             "DELETE FROM raft_log WHERE log_index >= ?1",
             rusqlite::params![log_id.index],
@@ -210,7 +221,16 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
     }
 
     async fn purge(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let json = serde_json::to_string(&log_id).map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&e),
+        })?;
+
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
+        conn.execute("BEGIN", []).map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&e),
+        })?;
         conn.execute(
             "DELETE FROM raft_log WHERE log_index <= ?1",
             rusqlite::params![log_id.index],
@@ -218,17 +238,22 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
         .map_err(|e| StorageError::IO {
             source: StorageIOError::write(&e),
         })?;
-
-        drop(conn);
-        let json = serde_json::to_string(&log_id).map_err(|e| StorageError::IO {
+        conn.execute(
+            "INSERT OR REPLACE INTO raft_state (key, value) VALUES (?1, ?2)",
+            rusqlite::params!["last_purged", json],
+        )
+        .map_err(|e| StorageError::IO {
             source: StorageIOError::write(&e),
         })?;
-        self.set_state_value("last_purged", &json)?;
+        conn.execute("COMMIT", []).map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&e),
+        })?;
 
         Ok(())
     }
 }
 
+#[allow(clippy::result_large_err)]
 impl openraft::storage::RaftLogReader<TypeConfig> for SqliteLogStore {
     async fn try_get_log_entries<
         RB: std::ops::RangeBounds<u64> + Clone + std::fmt::Debug + OptionalSend,
@@ -247,7 +272,9 @@ impl openraft::storage::RaftLogReader<TypeConfig> for SqliteLogStore {
             std::ops::Bound::Unbounded => u64::MAX,
         };
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
         let mut stmt = conn
             .prepare(
                 "SELECT entry FROM raft_log WHERE log_index >= ?1 AND log_index < ?2 ORDER BY log_index",
@@ -256,7 +283,7 @@ impl openraft::storage::RaftLogReader<TypeConfig> for SqliteLogStore {
                 source: StorageIOError::read(&e),
             })?;
 
-        let entries: Vec<Entry<TypeConfig>> = stmt
+        let rows: Vec<Vec<u8>> = stmt
             .query_map(rusqlite::params![start, end], |row| {
                 let data: Vec<u8> = row.get(0)?;
                 Ok(data)
@@ -264,9 +291,19 @@ impl openraft::storage::RaftLogReader<TypeConfig> for SqliteLogStore {
             .map_err(|e| StorageError::IO {
                 source: StorageIOError::read(&e),
             })?
-            .filter_map(|r| r.ok())
-            .filter_map(|data| serde_json::from_slice(&data).ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| StorageError::IO {
+                source: StorageIOError::read(&e),
+            })?;
+
+        let entries: Vec<Entry<TypeConfig>> = rows
+            .into_iter()
+            .map(|data| {
+                serde_json::from_slice(&data).map_err(|e| StorageError::IO {
+                    source: StorageIOError::read(&e),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(entries)
     }

@@ -3,9 +3,12 @@
 //! Encrypted format: `enc:<nonce_hex>:<ciphertext_base64>`
 //! If a value doesn't start with `enc:`, it's returned as-is (plaintext passthrough).
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::RngCore;
+
+/// Fixed AAD (Associated Authenticated Data) to bind ciphertext to its context.
+const CREDENTIAL_AAD: &[u8] = b"enigma-credential-v1";
 
 /// Encrypt a plaintext credential using a 32-byte key.
 /// Returns a string in the format `enc:<nonce_hex>:<ciphertext_base64>`.
@@ -17,8 +20,13 @@ pub fn encrypt_credential(plaintext: &str, key: &[u8; 32]) -> anyhow::Result<Str
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    let payload = Payload {
+        msg: plaintext.as_bytes(),
+        aad: CREDENTIAL_AAD,
+    };
+
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_bytes())
+        .encrypt(nonce, payload)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
 
     let nonce_hex = hex_encode(&nonce_bytes);
@@ -52,8 +60,13 @@ pub fn decrypt_credential(value: &str, key: &[u8; 32]) -> anyhow::Result<String>
         Aes256Gcm::new_from_slice(key).map_err(|e| anyhow::anyhow!("AES key error: {e}"))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    let payload = Payload {
+        msg: ciphertext.as_ref(),
+        aad: CREDENTIAL_AAD,
+    };
+
     let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
+        .decrypt(nonce, payload)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {e}"))?;
 
     Ok(String::from_utf8(plaintext)?)
@@ -64,6 +77,9 @@ fn hex_encode(data: &[u8]) -> String {
 }
 
 fn hex_decode(hex: &str) -> anyhow::Result<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        anyhow::bail!("Invalid hex: odd length {}", hex.len());
+    }
     (0..hex.len())
         .step_by(2)
         .map(|i| {
@@ -97,6 +113,12 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 fn base64_decode(s: &str) -> anyhow::Result<Vec<u8>> {
+    if !s.len().is_multiple_of(4) {
+        anyhow::bail!(
+            "Invalid base64: input length {} is not a multiple of 4",
+            s.len()
+        );
+    }
     fn val(c: u8) -> anyhow::Result<u32> {
         match c {
             b'A'..=b'Z' => Ok((c - b'A') as u32),

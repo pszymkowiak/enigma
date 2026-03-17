@@ -48,7 +48,7 @@ pub async fn handle_list_objects_v2(
 
         // Handle delimiter-based grouping (virtual directories)
         if !delimiter.is_empty() {
-            let after_prefix = &key[prefix.len()..];
+            let after_prefix = key.strip_prefix(prefix).unwrap_or(key);
             if let Some(pos) = after_prefix.find(delimiter) {
                 let common_prefix = format!("{}{}{}", prefix, &after_prefix[..pos], delimiter);
                 common_prefixes.insert(common_prefix);

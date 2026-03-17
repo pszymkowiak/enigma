@@ -74,14 +74,14 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
 
     // Setup distributor
     let distributor = match config.enigma.distribution {
-        DistributionStrategy::RoundRobin => Distributor::round_robin(provider_infos),
-        DistributionStrategy::Weighted => Distributor::weighted(provider_infos),
+        DistributionStrategy::RoundRobin => Distributor::round_robin(provider_infos)?,
+        DistributionStrategy::Weighted => Distributor::weighted(provider_infos)?,
     };
 
     // Setup chunking engine
     let chunk_engine: Box<dyn ChunkEngine> = match config.enigma.chunk_strategy {
-        ChunkStrategy::Cdc { target_size } => Box::new(CdcChunkEngine::new(target_size)),
-        ChunkStrategy::Fixed { size } => Box::new(FixedSizeChunkEngine::new(size)),
+        ChunkStrategy::Cdc { target_size } => Box::new(CdcChunkEngine::new(target_size)?),
+        ChunkStrategy::Fixed { size } => Box::new(FixedSizeChunkEngine::new(size)?),
     };
 
     // Create backup record
@@ -93,6 +93,64 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
     let files = walk_files(&source)?;
     println!("Found {} files", files.len());
 
+    match run_backup_inner(
+        &db,
+        &backup_id,
+        &source,
+        &files,
+        &*chunk_engine,
+        &config,
+        &key_material,
+        &storage_providers,
+        &distributor,
+    )
+    .await
+    {
+        Ok((total_bytes, total_chunks, dedup_chunks)) => {
+            db.complete_backup(
+                &backup_id,
+                files.len() as u64,
+                total_bytes,
+                total_chunks,
+                dedup_chunks,
+            )?;
+            db.log(Some(&backup_id), "INFO", "Backup completed")?;
+
+            println!("\nBackup completed:");
+            println!("  ID:             {backup_id}");
+            println!("  Files:          {}", files.len());
+            println!("  Total size:     {} bytes", total_bytes);
+            println!("  Total chunks:   {total_chunks}");
+            println!("  Dedup'd chunks: {dedup_chunks}");
+
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Backup {backup_id} failed: {e}");
+            if let Err(fail_err) = db.fail_backup(&backup_id) {
+                tracing::error!("Failed to mark backup as failed: {fail_err}");
+            }
+            let _ = db.log(Some(&backup_id), "ERROR", &format!("Backup failed: {e}"));
+            Err(e)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_backup_inner(
+    db: &ManifestDb,
+    backup_id: &str,
+    source: &Path,
+    files: &[PathBuf],
+    chunk_engine: &dyn ChunkEngine,
+    config: &EnigmaConfig,
+    key_material: &KeyMaterial,
+    storage_providers: &std::collections::HashMap<
+        i64,
+        Box<dyn enigma_storage::provider::StorageProvider>,
+    >,
+    distributor: &Distributor,
+) -> Result<(u64, u64, u64)> {
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -105,8 +163,8 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
     let mut total_chunks = 0u64;
     let mut dedup_chunks = 0u64;
 
-    for file_path in &files {
-        let relative = file_path.strip_prefix(&source).unwrap_or(file_path);
+    for file_path in files {
+        let relative = file_path.strip_prefix(source).unwrap_or(file_path);
         pb.set_message(format!("{}", relative.display()));
 
         let metadata = std::fs::metadata(file_path)?;
@@ -133,7 +191,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
                 .map(|d| d.as_secs().to_string())
         });
         let file_id = db.insert_backup_file(
-            &backup_id,
+            backup_id,
             relative.to_str().unwrap_or(""),
             file_size,
             mtime.as_deref(),
@@ -165,7 +223,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
             };
 
             // Encrypt
-            let encrypted = encrypt_chunk(&data_to_encrypt, &chunk.hash, &key_material)?;
+            let encrypted = encrypt_chunk(&data_to_encrypt, &chunk.hash, key_material)?;
 
             // Dedup + upload
             let is_new = db.insert_or_dedup_chunk(
@@ -219,24 +277,7 @@ pub async fn run(source: &Path, base_dir: &Path, cli_passphrase: &Option<String>
 
     pb.finish_with_message("done");
 
-    // Complete backup
-    db.complete_backup(
-        &backup_id,
-        files.len() as u64,
-        total_bytes,
-        total_chunks,
-        dedup_chunks,
-    )?;
-    db.log(Some(&backup_id), "INFO", "Backup completed")?;
-
-    println!("\nBackup completed:");
-    println!("  ID:             {backup_id}");
-    println!("  Files:          {}", files.len());
-    println!("  Total size:     {} bytes", total_bytes);
-    println!("  Total chunks:   {total_chunks}");
-    println!("  Dedup'd chunks: {dedup_chunks}");
-
-    Ok(())
+    Ok((total_bytes, total_chunks, dedup_chunks))
 }
 
 fn walk_files(dir: &Path) -> Result<Vec<PathBuf>> {

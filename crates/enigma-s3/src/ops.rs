@@ -195,7 +195,9 @@ pub async fn retrieve_object(
         let nonce_arr: [u8; 12] = nonce
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid nonce length"))?;
-        let hash_bytes = hex_decode(chunk_hash_hex)?;
+        let hash_bytes: [u8; 32] = hex::decode(chunk_hash_hex)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid hash length"))?;
 
         let encrypted = EncryptedChunk {
             hash: ChunkHash(hash_bytes),
@@ -244,7 +246,9 @@ pub async fn remove_object(
 
     for (provider_id, storage_key) in to_delete {
         if let Some(provider) = state.providers.get(&provider_id) {
-            let _ = provider.delete_chunk(&storage_key).await;
+            if let Err(e) = provider.delete_chunk(&storage_key).await {
+                tracing::warn!("Failed to delete chunk {storage_key}: {e}");
+            }
         }
     }
 
@@ -269,7 +273,7 @@ pub async fn list_folder(
     let mut seen_folders = std::collections::BTreeSet::new();
 
     for (key, size, etag, created_at) in &objects {
-        let after_prefix = &key[prefix.len()..];
+        let after_prefix = key.strip_prefix(prefix).unwrap_or(key);
         if let Some(pos) = after_prefix.find('/') {
             let folder_name = &after_prefix[..pos];
             if seen_folders.insert(folder_name.to_string()) {
@@ -310,12 +314,3 @@ pub fn ensure_namespace(state: &EnigmaS3State, name: &str) -> anyhow::Result<()>
     Ok(())
 }
 
-fn hex_decode(hex: &str) -> anyhow::Result<[u8; 32]> {
-    let bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| anyhow::anyhow!("{e}")))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid hash length"))
-}

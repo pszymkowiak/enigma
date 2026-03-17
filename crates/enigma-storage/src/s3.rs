@@ -4,7 +4,7 @@ mod inner {
     use aws_sdk_s3::Client;
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::provider::StorageProvider;
+    use crate::provider::{MANIFEST_KEY, StorageProvider};
 
     /// AWS S3 and S3-compatible storage provider.
     ///
@@ -150,16 +150,23 @@ mod inner {
                 .await
             {
                 Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+                Err(err) => {
+                    let service_err = err.into_service_error();
+                    if service_err.is_not_found() {
+                        Ok(false)
+                    } else {
+                        Err(service_err.into())
+                    }
+                }
             }
         }
 
         async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
-            self.upload_chunk("enigma-manifest.enc", data).await
+            self.upload_chunk(MANIFEST_KEY, data).await
         }
 
         async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
-            self.download_chunk("enigma-manifest.enc").await
+            self.download_chunk(MANIFEST_KEY).await
         }
 
         async fn test_connection(&self) -> anyhow::Result<()> {

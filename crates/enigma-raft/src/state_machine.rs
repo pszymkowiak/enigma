@@ -6,7 +6,7 @@ use openraft::storage::RaftStateMachine;
 use openraft::storage::SnapshotSignature;
 use openraft::{
     BasicNode, Entry, EntryPayload, LogId, OptionalSend, Snapshot, SnapshotMeta, StorageError,
-    StoredMembership,
+    StorageIOError, StoredMembership,
 };
 
 use enigma_core::manifest::ManifestDb;
@@ -197,8 +197,18 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
     async fn applied_state(
         &mut self,
     ) -> Result<(Option<LogId<u64>>, StoredMembership<u64, BasicNode>), StorageError<u64>> {
-        let last_applied = *self.last_applied.lock().unwrap();
-        let membership = self.last_membership.lock().unwrap().clone();
+        let last_applied = *self.last_applied.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
+        let membership = self
+            .last_membership
+            .lock()
+            .map_err(|e| StorageError::IO {
+                source: StorageIOError::read(&std::io::Error::other(format!(
+                    "mutex poisoned: {e}"
+                ))),
+            })?
+            .clone();
         Ok((last_applied, membership))
     }
 
@@ -210,7 +220,11 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
         let mut responses = Vec::new();
 
         for entry in entries {
-            *self.last_applied.lock().unwrap() = Some(entry.log_id);
+            *self.last_applied.lock().map_err(|e| StorageError::IO {
+                source: StorageIOError::write(&std::io::Error::other(format!(
+                    "mutex poisoned: {e}"
+                ))),
+            })? = Some(entry.log_id);
 
             match entry.payload {
                 EntryPayload::Blank => {
@@ -221,8 +235,11 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
                     responses.push(resp);
                 }
                 EntryPayload::Membership(mem) => {
-                    *self.last_membership.lock().unwrap() =
-                        StoredMembership::new(Some(entry.log_id), mem);
+                    *self.last_membership.lock().map_err(|e| StorageError::IO {
+                        source: StorageIOError::write(&std::io::Error::other(format!(
+                            "mutex poisoned: {e}"
+                        ))),
+                    })? = StoredMembership::new(Some(entry.log_id), mem);
                     responses.push(RaftResponse::Ok);
                 }
             }
@@ -274,12 +291,20 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
                 )
             })?;
 
-        *self.db.lock().unwrap() = new_db;
-        *self.last_applied.lock().unwrap() = meta.last_log_id;
-        *self.last_membership.lock().unwrap() = meta.last_membership.clone();
+        *self.db.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })? = new_db;
+        *self.last_applied.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })? = meta.last_log_id;
+        *self.last_membership.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })? = meta.last_membership.clone();
 
         // Update cached snapshot
-        *self.cached_snapshot.lock().unwrap() = Some(Snapshot {
+        *self.cached_snapshot.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })? = Some(Snapshot {
             meta: meta.clone(),
             snapshot: Box::new(Cursor::new(bytes)),
         });
@@ -290,7 +315,9 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<u64>> {
-        let cached = self.cached_snapshot.lock().unwrap();
+        let cached = self.cached_snapshot.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
         Ok(cached.as_ref().map(|s| {
             let data = s.snapshot.get_ref().clone();
             Snapshot {
@@ -303,10 +330,24 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
 
 impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilder {
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<u64>> {
-        let last_applied = *self.last_applied.lock().unwrap();
-        let membership = self.last_membership.lock().unwrap().clone();
+        let last_applied = *self.last_applied.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::read(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })?;
+        let membership = self
+            .last_membership
+            .lock()
+            .map_err(|e| StorageError::IO {
+                source: StorageIOError::read(&std::io::Error::other(format!(
+                    "mutex poisoned: {e}"
+                ))),
+            })?
+            .clone();
 
-        let snapshot_id = format!("snapshot-{}", last_applied.map(|l| l.index).unwrap_or(0));
+        let snapshot_id = format!(
+            "snapshot-{}-{}",
+            last_applied.map(|l| l.index).unwrap_or(0),
+            chrono::Utc::now().timestamp()
+        );
 
         tracing::info!(
             snapshot_id = %snapshot_id,
@@ -315,7 +356,11 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilde
         );
 
         let bytes = {
-            let db = self.db.lock().unwrap();
+            let db = self.db.lock().map_err(|e| StorageError::IO {
+                source: StorageIOError::read(&std::io::Error::other(format!(
+                    "mutex poisoned: {e}"
+                ))),
+            })?;
             db.snapshot_to_bytes().map_err(|e| {
                 let io_err = std::io::Error::other(e.to_string());
                 StorageError::from_io_error(
@@ -335,7 +380,9 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilde
         };
 
         // Cache it
-        *self.cached_snapshot.lock().unwrap() = Some(Snapshot::<TypeConfig> {
+        *self.cached_snapshot.lock().map_err(|e| StorageError::IO {
+            source: StorageIOError::write(&std::io::Error::other(format!("mutex poisoned: {e}"))),
+        })? = Some(Snapshot::<TypeConfig> {
             meta: meta.clone(),
             snapshot: Box::new(Cursor::new(bytes.clone())),
         });

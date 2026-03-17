@@ -2,14 +2,20 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
 
 use crate::models::{BackupResponse, ChunkStatsResponse, ProviderResponse};
 use crate::state::AppState;
 
-pub async fn get_providers(State(state): State<Arc<AppState>>) -> Json<Vec<ProviderResponse>> {
-    let db = state.db.lock().unwrap();
+pub async fn get_providers(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ProviderResponse>>, (StatusCode, &'static str)> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
     let providers = db.list_providers().unwrap_or_default();
-    Json(
+    Ok(Json(
         providers
             .iter()
             .map(|p| ProviderResponse {
@@ -21,22 +27,32 @@ pub async fn get_providers(State(state): State<Arc<AppState>>) -> Json<Vec<Provi
                 weight: p.weight,
             })
             .collect(),
-    )
+    ))
 }
 
-pub async fn get_chunk_stats(State(state): State<Arc<AppState>>) -> Json<ChunkStatsResponse> {
-    let db = state.db.lock().unwrap();
+pub async fn get_chunk_stats(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ChunkStatsResponse>, (StatusCode, &'static str)> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
     let (total, orphans) = db.chunk_stats().unwrap_or((0, 0));
-    Json(ChunkStatsResponse {
+    Ok(Json(ChunkStatsResponse {
         total_chunks: total,
         orphan_chunks: orphans,
-    })
+    }))
 }
 
-pub async fn get_backups(State(state): State<Arc<AppState>>) -> Json<Vec<BackupResponse>> {
-    let db = state.db.lock().unwrap();
+pub async fn get_backups(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<BackupResponse>>, (StatusCode, &'static str)> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
     let backups = db.list_backups().unwrap_or_default();
-    Json(
+    Ok(Json(
         backups
             .iter()
             .map(|b| BackupResponse {
@@ -51,5 +67,5 @@ pub async fn get_backups(State(state): State<Arc<AppState>>) -> Json<Vec<BackupR
                 completed_at: b.completed_at.clone(),
             })
             .collect(),
-    )
+    ))
 }

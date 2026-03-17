@@ -118,6 +118,9 @@ openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 tonic = "0.12"
 prost = "0.13"
 
+# Base64
+base64 = "0.22"
+
 # Hex
 hex = "0.4"
 

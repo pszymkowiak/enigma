@@ -3,6 +3,14 @@ pub mod namespaces;
 pub mod status;
 pub mod storage;
 
+// Pending integration (files exist but not yet wired into the router):
+// - audit
+// - files
+// - groups
+// - permissions
+// - tokens
+// - users
+
 use std::sync::Arc;
 
 use axum::Router;

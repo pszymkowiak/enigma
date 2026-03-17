@@ -1,3 +1,4 @@
+use crate::error::{EnigmaError, Result};
 use crate::types::ProviderInfo;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,31 +16,39 @@ enum Strategy {
 
 impl Distributor {
     /// Create a round-robin distributor.
-    pub fn round_robin(providers: Vec<ProviderInfo>) -> Self {
-        assert!(!providers.is_empty(), "At least one provider required");
-        Self {
+    pub fn round_robin(providers: Vec<ProviderInfo>) -> Result<Self> {
+        if providers.is_empty() {
+            return Err(EnigmaError::Config(
+                "At least one provider required for round-robin distribution".to_string(),
+            ));
+        }
+        Ok(Self {
             providers,
             strategy: Strategy::RoundRobin,
             rr_counter: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Create a weighted distributor. Chunks are assigned proportionally to provider weights.
-    pub fn weighted(providers: Vec<ProviderInfo>) -> Self {
-        assert!(!providers.is_empty(), "At least one provider required");
+    pub fn weighted(providers: Vec<ProviderInfo>) -> Result<Self> {
+        if providers.is_empty() {
+            return Err(EnigmaError::Config(
+                "At least one provider required for weighted distribution".to_string(),
+            ));
+        }
         let mut cumulative = Vec::with_capacity(providers.len());
         let mut total = 0u64;
         for p in &providers {
             total += p.weight as u64;
             cumulative.push(total);
         }
-        Self {
+        Ok(Self {
             providers,
             strategy: Strategy::Weighted {
                 cumulative_weights: cumulative,
             },
             rr_counter: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Select the next provider for a chunk.
@@ -109,10 +118,22 @@ mod tests {
     #[test]
     fn round_robin_cycles() {
         let providers = make_providers(3);
-        let dist = Distributor::round_robin(providers);
+        let dist = Distributor::round_robin(providers).unwrap();
 
         let ids: Vec<i64> = (0..9).map(|_| dist.next_provider().id).collect();
         assert_eq!(ids, vec![0, 1, 2, 0, 1, 2, 0, 1, 2]);
+    }
+
+    #[test]
+    fn round_robin_empty_providers_returns_error() {
+        let result = Distributor::round_robin(vec![]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn weighted_empty_providers_returns_error() {
+        let result = Distributor::weighted(vec![]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -136,7 +157,7 @@ mod tests {
             },
         ];
 
-        let dist = Distributor::weighted(providers);
+        let dist = Distributor::weighted(providers).unwrap();
 
         // Over 4 chunks, expect ~3:1 ratio
         let mut counts = [0u32; 2];
@@ -155,21 +176,21 @@ mod tests {
     #[test]
     fn provider_by_id_found() {
         let providers = make_providers(3);
-        let dist = Distributor::round_robin(providers);
+        let dist = Distributor::round_robin(providers).unwrap();
         assert_eq!(dist.provider_by_id(1).unwrap().name, "provider-1");
     }
 
     #[test]
     fn provider_by_id_not_found() {
         let providers = make_providers(3);
-        let dist = Distributor::round_robin(providers);
+        let dist = Distributor::round_robin(providers).unwrap();
         assert!(dist.provider_by_id(99).is_none());
     }
 
     #[test]
     fn next_providers_returns_distinct() {
         let providers = make_providers(5);
-        let dist = Distributor::round_robin(providers);
+        let dist = Distributor::round_robin(providers).unwrap();
 
         let result = dist.next_providers(3);
         assert_eq!(result.len(), 3);
@@ -185,7 +206,7 @@ mod tests {
     #[test]
     fn next_providers_clamped() {
         let providers = make_providers(2);
-        let dist = Distributor::round_robin(providers);
+        let dist = Distributor::round_robin(providers).unwrap();
 
         // Requesting 5 providers but only 2 exist
         let result = dist.next_providers(5);
