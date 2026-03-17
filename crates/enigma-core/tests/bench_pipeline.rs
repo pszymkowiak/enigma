@@ -158,7 +158,7 @@ fn bench_cdc_chunking() {
     println!("\n=== CDC Chunking (4 MB target) ===");
     let tmp = tempfile::TempDir::new().unwrap();
     let sizes = [4_194_304, 16_777_216, 67_108_864]; // 4MB, 16MB, 64MB
-    let engine = CdcChunkEngine::new(4_194_304);
+    let engine = CdcChunkEngine::new(4_194_304).unwrap();
 
     for size in sizes {
         let data = generate_data(size);
@@ -184,7 +184,7 @@ fn bench_fixed_chunking() {
     println!("\n=== Fixed Chunking (4 MB) ===");
     let tmp = tempfile::TempDir::new().unwrap();
     let sizes = [4_194_304, 16_777_216, 67_108_864];
-    let engine = FixedSizeChunkEngine::new(4_194_304);
+    let engine = FixedSizeChunkEngine::new(4_194_304).unwrap();
 
     for size in sizes {
         let data = generate_data(size);
@@ -211,7 +211,7 @@ fn bench_full_pipeline() {
     let key = test_key();
     let tmp = tempfile::TempDir::new().unwrap();
     let sizes = [4_194_304, 16_777_216, 67_108_864]; // 4MB, 16MB, 64MB
-    let engine = CdcChunkEngine::new(4_194_304);
+    let engine = CdcChunkEngine::new(4_194_304).unwrap();
 
     for size in sizes {
         let data = generate_data(size);

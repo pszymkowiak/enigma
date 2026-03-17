@@ -190,8 +190,10 @@ impl S3 for EnigmaS3Service {
 
         // Delete chunks from storage providers
         for (provider_id, storage_key) in to_delete {
-            if let Some(provider) = self.state.providers.get(&provider_id) {
-                let _ = provider.delete_chunk(&storage_key).await;
+            if let Some(provider) = self.state.providers.get(&provider_id)
+                && let Err(e) = provider.delete_chunk(&storage_key).await
+            {
+                tracing::warn!("Failed to delete chunk {storage_key}: {e}");
             }
         }
 

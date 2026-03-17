@@ -40,11 +40,12 @@ struct RaftClusterHandle {
 impl enigma_web::cluster_handle::ClusterHandle for RaftClusterHandle {
     async fn metrics(&self) -> serde_json::Value {
         let m = self.raft.metrics().borrow().clone();
-        let peers: Vec<serde_json::Value> = {
-            let p = self.peers.lock().unwrap();
-            p.iter()
+        let peers: Vec<serde_json::Value> = match self.peers.lock() {
+            Ok(p) => p
+                .iter()
                 .map(|(id, addr)| serde_json::json!({ "id": id, "addr": addr }))
-                .collect()
+                .collect(),
+            Err(_) => vec![],
         };
 
         serde_json::json!({
@@ -74,7 +75,10 @@ impl enigma_web::cluster_handle::ClusterHandle for RaftClusterHandle {
         self.raft.change_membership(voter_ids, false).await?;
 
         // Update peer map
-        self.peers.lock().unwrap().insert(node_id, addr);
+        self.peers
+            .lock()
+            .map_err(|e| anyhow::anyhow!("peers lock poisoned: {e}"))?
+            .insert(node_id, addr);
         Ok(())
     }
 
@@ -90,7 +94,10 @@ impl enigma_web::cluster_handle::ClusterHandle for RaftClusterHandle {
         self.raft.change_membership(voter_ids, false).await?;
 
         // Update peer map
-        self.peers.lock().unwrap().remove(&node_id);
+        self.peers
+            .lock()
+            .map_err(|e| anyhow::anyhow!("peers lock poisoned: {e}"))?
+            .remove(&node_id);
         Ok(())
     }
 
@@ -205,6 +212,14 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Loading configuration from {}", cli.config.display());
 
+    if proxy_config.s3_proxy.access_key == "enigma-admin"
+        || proxy_config.s3_proxy.secret_key == "enigma-secret"
+    {
+        tracing::warn!(
+            "Using default S3 credentials — change access_key/secret_key in config for production!"
+        );
+    }
+
     // Open manifest DB (shared between S3 state and Raft state machine)
     let db = ManifestDb::open(Path::new(&proxy_config.enigma.db_path))?;
     let shared_db = Arc::new(Mutex::new(db));
@@ -243,16 +258,22 @@ async fn main() -> anyhow::Result<()> {
     let mut storage_providers: HashMap<i64, Box<dyn StorageProvider>> = HashMap::new();
 
     for pc in &proxy_config.providers {
-        let existing = shared_db.lock().unwrap().list_providers()?;
+        let existing = shared_db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+            .list_providers()?;
         let pid = match existing.iter().find(|p| p.name == pc.name) {
             Some(p) => p.id,
-            None => shared_db.lock().unwrap().insert_provider(
-                &pc.name,
-                pc.provider_type,
-                &pc.bucket,
-                pc.region.as_deref(),
-                pc.weight,
-            )?,
+            None => shared_db
+                .lock()
+                .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+                .insert_provider(
+                    &pc.name,
+                    pc.provider_type,
+                    &pc.bucket,
+                    pc.region.as_deref(),
+                    pc.weight,
+                )?,
         };
 
         let provider: Box<dyn StorageProvider> = match pc.provider_type {
@@ -310,7 +331,10 @@ async fn main() -> anyhow::Result<()> {
         storage_providers.insert(pid, provider);
     }
 
-    let provider_infos = shared_db.lock().unwrap().list_providers()?;
+    let provider_infos = shared_db
+        .lock()
+        .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+        .list_providers()?;
 
     // If no providers are loaded, re-create them from DB entries or create a local fallback
     if storage_providers.is_empty() {
@@ -321,13 +345,16 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or(Path::new("."))
                 .join("storage");
             std::fs::create_dir_all(&local_path)?;
-            let pid = shared_db.lock().unwrap().insert_provider(
-                "local-default",
-                ProviderType::Local,
-                local_path.to_str().unwrap_or(""),
-                None,
-                1,
-            )?;
+            let pid = shared_db
+                .lock()
+                .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+                .insert_provider(
+                    "local-default",
+                    ProviderType::Local,
+                    local_path.to_str().unwrap_or(""),
+                    None,
+                    1,
+                )?;
             let provider =
                 enigma_storage::local::LocalStorageProvider::new(&local_path, "local-default")?;
             storage_providers.insert(pid, Box::new(provider));
@@ -356,12 +383,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let provider_infos = shared_db.lock().unwrap().list_providers()?;
+    let provider_infos = shared_db
+        .lock()
+        .map_err(|e| anyhow::anyhow!("db lock poisoned: {e}"))?
+        .list_providers()?;
 
     // Setup distributor
     let distributor = match proxy_config.enigma.distribution {
-        DistributionStrategy::RoundRobin => Distributor::round_robin(provider_infos),
-        DistributionStrategy::Weighted => Distributor::weighted(provider_infos),
+        DistributionStrategy::RoundRobin => Distributor::round_robin(provider_infos)?,
+        DistributionStrategy::Weighted => Distributor::weighted(provider_infos)?,
     };
 
     // Build the EnigmaConfig for the state
@@ -630,7 +660,10 @@ async fn main() -> anyhow::Result<()> {
     // Start HTTP/HTTPS server (runs in all modes: single-node and multi-node)
     let addr: SocketAddr = proxy_config.s3_proxy.listen_addr.parse()?;
     tracing::info!("Starting Enigma S3 proxy on {addr}");
-    tracing::info!("  Access key: {}", proxy_config.s3_proxy.access_key);
+    tracing::info!(
+        "  Access key: {}***",
+        &proxy_config.s3_proxy.access_key[..4.min(proxy_config.s3_proxy.access_key.len())]
+    );
     tracing::info!("  Region: {}", proxy_config.s3_proxy.default_region);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

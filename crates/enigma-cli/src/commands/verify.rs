@@ -91,13 +91,10 @@ pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<Strin
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("Invalid nonce"))?;
 
-            let hash_bytes: Vec<u8> = (0..chunk_hash.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&chunk_hash[i..i + 2], 16))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let hash_arr: [u8; 32] = hash_bytes
+            let hash_arr: [u8; 32] = hex::decode(chunk_hash)
+                .map_err(|e| anyhow::anyhow!("hex decode error: {e}"))?
                 .try_into()
-                .map_err(|_| anyhow::anyhow!("Invalid hash"))?;
+                .map_err(|_| anyhow::anyhow!("Invalid hash length"))?;
 
             let encrypted = EncryptedChunk {
                 hash: ChunkHash(hash_arr),

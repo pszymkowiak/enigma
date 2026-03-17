@@ -54,19 +54,31 @@ impl ManifestDb {
             .conn
             .prepare("SELECT id, name, type, bucket, region, weight FROM providers")?;
         let rows = stmt.query_map([], |row| {
-            Ok(ProviderInfo {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                provider_type: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .unwrap_or(ProviderType::Local),
-                bucket: row.get(3)?,
-                region: row.get(4)?,
-                weight: row.get(5)?,
-            })
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, u32>(5)?,
+            ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        let raw: Vec<_> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        raw.into_iter()
+            .map(|(id, name, type_str, bucket, region, weight)| {
+                let provider_type = type_str
+                    .parse()
+                    .map_err(|_| EnigmaError::InvalidProviderType(type_str.clone()))?;
+                Ok(ProviderInfo {
+                    id,
+                    name,
+                    provider_type,
+                    bucket,
+                    region,
+                    weight,
+                })
+            })
+            .collect()
     }
 
     // ── Backups ────────────────────────────────────────────────
@@ -103,28 +115,48 @@ impl ManifestDb {
     }
 
     pub fn get_backup(&self, id: &str) -> Result<BackupRecord> {
-        self.conn
+        let row = self
+            .conn
             .query_row(
                 "SELECT id, source_path, status, total_files, total_bytes, total_chunks, dedup_chunks, created_at, completed_at FROM backups WHERE id=?1",
                 params![id],
                 |row| {
-                    Ok(BackupRecord {
-                        id: row.get(0)?,
-                        source_path: row.get(1)?,
-                        status: row
-                            .get::<_, String>(2)?
-                            .parse()
-                            .unwrap_or(BackupStatus::Failed),
-                        total_files: row.get(3)?,
-                        total_bytes: row.get(4)?,
-                        total_chunks: row.get(5)?,
-                        dedup_chunks: row.get(6)?,
-                        created_at: row.get(7)?,
-                        completed_at: row.get(8)?,
-                    })
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, u64>(3)?,
+                        row.get::<_, u64>(4)?,
+                        row.get::<_, u64>(5)?,
+                        row.get::<_, u64>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
                 },
             )
-            .map_err(|_| EnigmaError::BackupNotFound(id.to_string()))
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    EnigmaError::BackupNotFound(id.to_string())
+                }
+                other => EnigmaError::Database(other),
+            })?;
+
+        let status: BackupStatus = row
+            .2
+            .parse()
+            .map_err(|_| EnigmaError::InvalidStatus(row.2.clone()))?;
+
+        Ok(BackupRecord {
+            id: row.0,
+            source_path: row.1,
+            status,
+            total_files: row.3,
+            total_bytes: row.4,
+            total_chunks: row.5,
+            dedup_chunks: row.6,
+            created_at: row.7,
+            completed_at: row.8,
+        })
     }
 
     pub fn list_backups(&self) -> Result<Vec<BackupRecord>> {
@@ -132,22 +164,49 @@ impl ManifestDb {
             "SELECT id, source_path, status, total_files, total_bytes, total_chunks, dedup_chunks, created_at, completed_at FROM backups ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(BackupRecord {
-                id: row.get(0)?,
-                source_path: row.get(1)?,
-                status: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .unwrap_or(BackupStatus::Failed),
-                total_files: row.get(3)?,
-                total_bytes: row.get(4)?,
-                total_chunks: row.get(5)?,
-                dedup_chunks: row.get(6)?,
-                created_at: row.get(7)?,
-                completed_at: row.get(8)?,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+                row.get::<_, u64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        let raw: Vec<_> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        raw.into_iter()
+            .map(
+                |(
+                    id,
+                    source_path,
+                    status_str,
+                    total_files,
+                    total_bytes,
+                    total_chunks,
+                    dedup_chunks,
+                    created_at,
+                    completed_at,
+                )| {
+                    let status: BackupStatus = status_str
+                        .parse()
+                        .map_err(|_| EnigmaError::InvalidStatus(status_str.clone()))?;
+                    Ok(BackupRecord {
+                        id,
+                        source_path,
+                        status,
+                        total_files,
+                        total_bytes,
+                        total_chunks,
+                        dedup_chunks,
+                        created_at,
+                        completed_at,
+                    })
+                },
+            )
+            .collect()
     }
 
     pub fn latest_backup(&self) -> Result<Option<BackupRecord>> {
@@ -155,22 +214,48 @@ impl ManifestDb {
             "SELECT id, source_path, status, total_files, total_bytes, total_chunks, dedup_chunks, created_at, completed_at FROM backups ORDER BY created_at DESC LIMIT 1",
         )?;
         let mut rows = stmt.query_map([], |row| {
-            Ok(BackupRecord {
-                id: row.get(0)?,
-                source_path: row.get(1)?,
-                status: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .unwrap_or(BackupStatus::Failed),
-                total_files: row.get(3)?,
-                total_bytes: row.get(4)?,
-                total_chunks: row.get(5)?,
-                dedup_chunks: row.get(6)?,
-                created_at: row.get(7)?,
-                completed_at: row.get(8)?,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+                row.get::<_, u64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
         })?;
-        Ok(rows.next().and_then(|r| r.ok()))
+        match rows.next() {
+            Some(Ok((
+                id,
+                source_path,
+                status_str,
+                total_files,
+                total_bytes,
+                total_chunks,
+                dedup_chunks,
+                created_at,
+                completed_at,
+            ))) => {
+                let status: BackupStatus = status_str
+                    .parse()
+                    .map_err(|_| EnigmaError::InvalidStatus(status_str.clone()))?;
+                Ok(Some(BackupRecord {
+                    id,
+                    source_path,
+                    status,
+                    total_files,
+                    total_bytes,
+                    total_chunks,
+                    dedup_chunks,
+                    created_at,
+                    completed_at,
+                }))
+            }
+            Some(Err(e)) => Err(EnigmaError::Database(e)),
+            None => Ok(None),
+        }
     }
 
     // ── Backup files ───────────────────────────────────────────
@@ -198,12 +283,14 @@ impl ManifestDb {
         let rows = stmt.query_map(params![backup_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── Chunks ─────────────────────────────────────────────────
 
-    /// Insert a new chunk. Returns true if inserted (new), false if already existed (dedup).
+    /// Insert a new chunk or increment its ref_count if it already exists.
+    /// Returns true if inserted (new), false if already existed (dedup).
+    /// Uses an atomic upsert (INSERT ... ON CONFLICT) to avoid TOCTOU races.
     #[allow(clippy::too_many_arguments)]
     pub fn insert_or_dedup_chunk(
         &self,
@@ -216,21 +303,21 @@ impl ManifestDb {
         size_encrypted: u64,
         size_compressed: Option<u64>,
     ) -> Result<bool> {
-        // Try to increment ref_count if it already exists
-        let updated = self.conn.execute(
-            "UPDATE chunks SET ref_count = ref_count + 1 WHERE hash = ?1",
-            params![hash],
-        )?;
-
-        if updated > 0 {
-            return Ok(false); // deduped
-        }
-
         self.conn.execute(
-            "INSERT INTO chunks (hash, nonce, key_id, provider_id, storage_key, size_plain, size_encrypted, size_compressed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO chunks (hash, nonce, key_id, provider_id, storage_key, size_plain, size_encrypted, size_compressed, ref_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)
+             ON CONFLICT(hash) DO UPDATE SET ref_count = ref_count + 1",
             params![hash, nonce, key_id, provider_id, storage_key, size_plain, size_encrypted, size_compressed],
         )?;
-        Ok(true) // new
+
+        // ref_count == 1 means we just inserted; > 1 means it already existed
+        let ref_count: u64 = self.conn.query_row(
+            "SELECT ref_count FROM chunks WHERE hash = ?1",
+            params![hash],
+            |row| row.get(0),
+        )?;
+
+        Ok(ref_count == 1)
     }
 
     #[allow(clippy::type_complexity)]
@@ -251,7 +338,11 @@ impl ManifestDb {
                 row.get::<_, Option<u64>>(5)?,
             ))
         })?;
-        Ok(rows.next().and_then(|r| r.ok()))
+        match rows.next() {
+            Some(Ok(v)) => Ok(Some(v)),
+            Some(Err(e)) => Err(EnigmaError::Database(e)),
+            None => Ok(None),
+        }
     }
 
     /// Decrement ref_count. If it reaches 0, return ALL storage locations for deletion
@@ -309,7 +400,7 @@ impl ManifestDb {
         let rows = stmt.query_map(params![chunk_hash], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Get all storage locations for a chunk (replicas first, then legacy fallback).
@@ -366,7 +457,7 @@ impl ManifestDb {
                 row.get::<_, String>(2)?,
             ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── File-chunk mapping ─────────────────────────────────────
@@ -392,7 +483,7 @@ impl ManifestDb {
         let rows = stmt.query_map(params![file_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── Logs ───────────────────────────────────────────────────
@@ -412,7 +503,7 @@ impl ManifestDb {
         let rows = stmt.query_map(params![backup_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── GC (Garbage Collection) ──────────────────────────────
@@ -433,7 +524,7 @@ impl ManifestDb {
                 row.get::<_, String>(2)?,
             ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Delete a chunk record by hash.
@@ -460,7 +551,6 @@ impl ManifestDb {
 
     /// Detailed chunk storage metrics.
     pub fn chunk_storage_details(&self) -> Result<(u64, u64, u64, Option<u64>, u64)> {
-        // total_size_plain, total_size_encrypted, total_size_compressed, total_refs
         let mut stmt = self.conn.prepare(
             "SELECT COALESCE(SUM(size_plain),0), COALESCE(SUM(size_encrypted),0), SUM(size_compressed), COALESCE(SUM(ref_count),0) FROM chunks",
         )?;
@@ -502,7 +592,7 @@ impl ManifestDb {
                 row.get::<_, u64>(3)?,
             ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Recent chunks: Vec<(hash, provider_name, size_plain, size_encrypted, ref_count, created_at)>
@@ -526,7 +616,7 @@ impl ManifestDb {
                 row.get::<_, String>(5)?,
             ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── Snapshots ──────────────────────────────────────────────
@@ -566,7 +656,11 @@ impl ManifestDb {
             .conn
             .prepare("SELECT id FROM namespaces WHERE name=?1")?;
         let mut rows = stmt.query_map(params![name], |row| row.get::<_, i64>(0))?;
-        Ok(rows.next().and_then(|r| r.ok()))
+        match rows.next() {
+            Some(Ok(v)) => Ok(Some(v)),
+            Some(Err(e)) => Err(EnigmaError::Database(e)),
+            None => Ok(None),
+        }
     }
 
     pub fn namespace_exists(&self, name: &str) -> Result<bool> {
@@ -585,7 +679,7 @@ impl ManifestDb {
             .conn
             .prepare("SELECT id, name, created_at FROM namespaces ORDER BY name")?;
         let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── S3 Gateway: Objects ──────────────────────────────────
@@ -630,7 +724,11 @@ impl ManifestDb {
                 row.get::<_, String>(6)?,
             ))
         })?;
-        Ok(rows.next().and_then(|r| r.ok()))
+        match rows.next() {
+            Some(Ok(v)) => Ok(Some(v)),
+            Some(Err(e)) => Err(EnigmaError::Database(e)),
+            None => Ok(None),
+        }
     }
 
     /// Delete an object by namespace_id + key. Also cleans up object_chunks
@@ -688,7 +786,7 @@ impl ManifestDb {
                 ))
             },
         )?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn count_objects_with_prefix(&self, namespace_id: i64, prefix: &str) -> Result<u64> {
@@ -724,7 +822,7 @@ impl ManifestDb {
         let rows = stmt.query_map(params![object_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ── S3 Gateway: Multipart uploads ────────────────────────
@@ -749,7 +847,11 @@ impl ManifestDb {
         let mut rows = stmt.query_map(params![upload_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
-        Ok(rows.next().and_then(|r| r.ok()))
+        match rows.next() {
+            Some(Ok(v)) => Ok(Some(v)),
+            Some(Err(e)) => Err(EnigmaError::Database(e)),
+            None => Ok(None),
+        }
     }
 
     pub fn insert_multipart_part(
@@ -780,7 +882,7 @@ impl ManifestDb {
                 row.get::<_, String>(3)?,
             ))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn abort_multipart_upload(&self, upload_id: &str) -> Result<()> {
@@ -805,7 +907,7 @@ impl ManifestDb {
         let rows = stmt.query_map(params![namespace_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
 
@@ -861,7 +963,7 @@ mod tests {
             .unwrap();
         assert!(!is_new);
 
-        // Map file → chunk
+        // Map file -> chunk
         db.insert_file_chunk(file_id, "deadbeef", 0, 0).unwrap();
 
         // Complete backup
@@ -903,11 +1005,11 @@ mod tests {
         db.insert_or_dedup_chunk("aaa", &[0; 12], "k1", pid, "key", 100, 116, None)
             .unwrap();
 
-        // First decrement: ref_count goes to 1 — no deletion
+        // First decrement: ref_count goes to 1 -- no deletion
         let result = db.decrement_chunk_ref("aaa").unwrap();
         assert!(result.is_empty());
 
-        // Second decrement: ref_count goes to 0 — returns deletion info
+        // Second decrement: ref_count goes to 0 -- returns deletion info
         let result = db.decrement_chunk_ref("aaa").unwrap();
         assert!(!result.is_empty());
     }
@@ -975,7 +1077,7 @@ mod tests {
 
         db.insert_or_dedup_chunk("hash3", &[2; 12], "k1", p1, "skey3", 300, 316, None)
             .unwrap();
-        // No replicas inserted — should fallback to primary from chunks table
+        // No replicas inserted -- should fallback to primary from chunks table
 
         let loc = db.get_chunk_locations("hash3").unwrap().unwrap();
         let (_nonce, _key_id, locations, _size_enc, _size_comp) = loc;
@@ -999,7 +1101,7 @@ mod tests {
         db.insert_chunk_replicas("hash4", &[(p1, "skey4"), (p2, "skey4")])
             .unwrap();
 
-        // Decrement to 0 → should return both provider locations
+        // Decrement to 0 -> should return both provider locations
         let result = db.decrement_chunk_ref("hash4").unwrap();
         assert_eq!(result.len(), 2);
         let pids: Vec<i64> = result.iter().map(|(pid, _)| *pid).collect();

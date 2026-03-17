@@ -125,6 +125,8 @@ pub async fn handle_put_object(
     Ok(S3Response::new(output))
 }
 
+const MAX_BODY_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5 GB
+
 /// Read the full body from a StreamingBlob into a Vec<u8>.
 pub async fn read_body(body: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
     let Some(mut body) = body else {
@@ -134,6 +136,9 @@ pub async fn read_body(body: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
     while let Some(chunk) = body.next().await {
         let chunk = chunk.map_err(|_| s3_error!(InternalError))?;
         data.extend_from_slice(&chunk);
+        if data.len() > MAX_BODY_SIZE {
+            return Err(s3_error!(EntityTooLarge));
+        }
     }
     Ok(data)
 }

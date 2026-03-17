@@ -11,14 +11,20 @@ pub struct FixedSizeChunkEngine {
 }
 
 impl FixedSizeChunkEngine {
-    pub fn new(chunk_size: usize) -> Self {
-        Self { chunk_size }
+    pub fn new(chunk_size: usize) -> Result<Self> {
+        if chunk_size == 0 {
+            return Err(EnigmaError::Chunking(
+                "chunk_size must be greater than 0".to_string(),
+            ));
+        }
+        Ok(Self { chunk_size })
     }
 }
 
 impl Default for FixedSizeChunkEngine {
     fn default() -> Self {
-        Self::new(4 * 1024 * 1024) // 4 MB
+        // SAFETY: 4 MB is always > 0
+        Self::new(4 * 1024 * 1024).expect("default chunk_size is non-zero")
     }
 }
 
@@ -80,7 +86,7 @@ mod tests {
         let data = vec![0xABu8; 2048];
         file.write_all(&data).unwrap();
 
-        let engine = FixedSizeChunkEngine::new(1024);
+        let engine = FixedSizeChunkEngine::new(1024).unwrap();
         let chunks = engine.chunk_file(file.path()).unwrap();
 
         assert_eq!(chunks.len(), 2);
@@ -96,7 +102,7 @@ mod tests {
         let data = vec![0xABu8; 1500];
         file.write_all(&data).unwrap();
 
-        let engine = FixedSizeChunkEngine::new(1024);
+        let engine = FixedSizeChunkEngine::new(1024).unwrap();
         let chunks = engine.chunk_file(file.path()).unwrap();
 
         assert_eq!(chunks.len(), 2);
@@ -107,7 +113,7 @@ mod tests {
     #[test]
     fn fixed_empty_file() {
         let file = NamedTempFile::new().unwrap();
-        let engine = FixedSizeChunkEngine::new(1024);
+        let engine = FixedSizeChunkEngine::new(1024).unwrap();
         let chunks = engine.chunk_file(file.path()).unwrap();
         assert!(chunks.is_empty());
     }

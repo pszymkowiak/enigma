@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
-use crate::provider::StorageProvider;
+use crate::provider::{MANIFEST_KEY, StorageProvider};
 
 /// Filesystem-based storage provider for local testing.
 pub struct LocalStorageProvider {
@@ -18,54 +18,60 @@ impl LocalStorageProvider {
         })
     }
 
-    fn chunk_path(&self, key: &str) -> PathBuf {
-        self.base_path.join(key)
+    fn chunk_path(&self, key: &str) -> anyhow::Result<PathBuf> {
+        // Reject path traversal
+        if key.contains("..") || key.starts_with('/') || key.starts_with('\\') {
+            anyhow::bail!("invalid chunk key: path traversal detected");
+        }
+        Ok(self.base_path.join(key))
     }
 
     fn manifest_path(&self) -> PathBuf {
-        self.base_path.join("enigma-manifest.enc")
+        self.base_path.join(MANIFEST_KEY)
     }
 }
 
 #[async_trait]
 impl StorageProvider for LocalStorageProvider {
     async fn upload_chunk(&self, key: &str, data: &[u8]) -> anyhow::Result<()> {
-        let path = self.chunk_path(key);
+        let path = self.chunk_path(key)?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        std::fs::write(&path, data)?;
+        tokio::fs::write(&path, data).await?;
         Ok(())
     }
 
     async fn download_chunk(&self, key: &str) -> anyhow::Result<Vec<u8>> {
-        let path = self.chunk_path(key);
-        Ok(std::fs::read(&path)?)
+        let path = self.chunk_path(key)?;
+        Ok(tokio::fs::read(&path).await?)
     }
 
     async fn delete_chunk(&self, key: &str) -> anyhow::Result<()> {
-        let path = self.chunk_path(key);
-        if path.exists() {
-            std::fs::remove_file(&path)?;
+        let path = self.chunk_path(key)?;
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
         }
-        Ok(())
     }
 
     async fn chunk_exists(&self, key: &str) -> anyhow::Result<bool> {
-        Ok(self.chunk_path(key).exists())
+        let path = self.chunk_path(key)?;
+        Ok(tokio::fs::try_exists(&path).await?)
     }
 
     async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
-        std::fs::write(self.manifest_path(), data)?;
+        tokio::fs::write(self.manifest_path(), data).await?;
         Ok(())
     }
 
     async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
-        Ok(std::fs::read(self.manifest_path())?)
+        Ok(tokio::fs::read(self.manifest_path()).await?)
     }
 
     async fn test_connection(&self) -> anyhow::Result<()> {
-        if !self.base_path.exists() {
+        if !tokio::fs::try_exists(&self.base_path).await? {
             anyhow::bail!("Base path does not exist: {}", self.base_path.display());
         }
         Ok(())
@@ -115,5 +121,26 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let provider = LocalStorageProvider::new(tmp.path(), "test-local").unwrap();
         provider.test_connection().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_path_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let provider = LocalStorageProvider::new(tmp.path(), "test-local").unwrap();
+
+        assert!(provider.upload_chunk("../etc/passwd", b"x").await.is_err());
+        assert!(provider.upload_chunk("/etc/passwd", b"x").await.is_err());
+        assert!(
+            provider
+                .upload_chunk("\\windows\\system32", b"x")
+                .await
+                .is_err()
+        );
+        assert!(
+            provider
+                .upload_chunk("foo/../../etc/passwd", b"x")
+                .await
+                .is_err()
+        );
     }
 }

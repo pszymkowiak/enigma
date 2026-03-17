@@ -61,7 +61,10 @@ pub async fn handle_get_object(
         // Decrypt
         let nonce_arr: [u8; 12] = nonce.try_into().map_err(|_| s3_error!(InternalError))?;
 
-        let hash_bytes = hex_decode(chunk_hash_hex).map_err(|_| s3_error!(InternalError))?;
+        let hash_bytes: [u8; 32] = hex::decode(chunk_hash_hex)
+            .map_err(|_| s3_error!(InternalError))?
+            .try_into()
+            .map_err(|_| s3_error!(InternalError))?;
 
         let encrypted = EncryptedChunk {
             hash: ChunkHash(hash_bytes),
@@ -98,14 +101,4 @@ pub async fn handle_get_object(
     };
 
     Ok(S3Response::new(output))
-}
-
-fn hex_decode(hex: &str) -> Result<[u8; 32], String> {
-    let bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    bytes
-        .try_into()
-        .map_err(|_| "Invalid hash length".to_string())
 }

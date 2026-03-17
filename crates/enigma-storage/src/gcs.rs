@@ -7,7 +7,7 @@ mod inner {
     use google_cloud_storage::http::objects::get::GetObjectRequest;
     use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
 
-    use crate::provider::StorageProvider;
+    use crate::provider::{MANIFEST_KEY, StorageProvider};
 
     /// Google Cloud Storage provider.
     pub struct GcsStorageProvider {
@@ -84,16 +84,23 @@ mod inner {
                 .await
             {
                 Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+                Err(e) => {
+                    let err_string = e.to_string();
+                    if err_string.contains("404") || err_string.contains("NotFound") {
+                        Ok(false)
+                    } else {
+                        Err(e.into())
+                    }
+                }
             }
         }
 
         async fn upload_manifest(&self, data: &[u8]) -> anyhow::Result<()> {
-            self.upload_chunk("enigma-manifest.enc", data).await
+            self.upload_chunk(MANIFEST_KEY, data).await
         }
 
         async fn download_manifest(&self) -> anyhow::Result<Vec<u8>> {
-            self.download_chunk("enigma-manifest.enc").await
+            self.download_chunk(MANIFEST_KEY).await
         }
 
         async fn test_connection(&self) -> anyhow::Result<()> {

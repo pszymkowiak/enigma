@@ -83,13 +83,9 @@ pub fn get_passphrase(cli_passphrase: &Option<String>) -> anyhow::Result<String>
     if let Some(p) = cli_passphrase {
         return Ok(p.clone());
     }
-    // Interactive prompt
-    use std::io::{self, Write};
-    print!("Enter passphrase: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
+    // Interactive prompt with echo suppression
+    let pass = rpassword::prompt_password_stdout("Enter passphrase: ")?;
+    Ok(pass)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -101,6 +97,12 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    if std::env::var("ENIGMA_PASSPHRASE").is_err() && cli.passphrase.is_some() {
+        eprintln!(
+            "Warning: passing --passphrase on the command line exposes it in process listings. Use ENIGMA_PASSPHRASE env var instead."
+        );
+    }
 
     let base_dir = match cli.config_dir {
         Some(ref dir) => dir.clone(),

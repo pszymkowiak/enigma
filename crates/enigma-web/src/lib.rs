@@ -28,6 +28,16 @@ pub async fn start_web_server(
         admin_pass: config.admin_pass.clone(),
     });
 
+    if state.jwt_secret == "enigma-jwt-secret-change-me" {
+        tracing::warn!("Using default JWT secret — set jwt_secret in config for production!");
+    }
+
+    if state.admin_user == "admin" && state.admin_pass == "enigma" {
+        tracing::warn!(
+            "Using default admin credentials — change admin_user/admin_pass in config for production!"
+        );
+    }
+
     let app = routes::build_router(state);
 
     let addr: SocketAddr = config.listen_addr.parse()?;

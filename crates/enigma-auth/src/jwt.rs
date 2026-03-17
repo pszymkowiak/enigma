@@ -11,6 +11,8 @@ pub struct AuthClaims {
     pub permissions: Vec<String>,
     pub exp: usize,
     pub iat: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
 }
 
 pub fn create_jwt(
@@ -28,6 +30,7 @@ pub fn create_jwt(
         permissions,
         exp: now + 86400,
         iat: now,
+        iss: Some("enigma".to_string()),
     };
     encode(
         &Header::default(),
@@ -38,10 +41,12 @@ pub fn create_jwt(
 }
 
 pub fn verify_jwt(token: &str, secret: &str) -> Result<AuthClaims, AuthError> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&["enigma"]);
     let data = decode::<AuthClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )
     .map_err(|_| AuthError::Unauthorized)?;
     Ok(data.claims)

@@ -15,18 +15,24 @@ pub struct CdcChunkEngine {
 }
 
 impl CdcChunkEngine {
-    pub fn new(target_size: u32) -> Self {
-        Self {
+    pub fn new(target_size: u32) -> Result<Self> {
+        if target_size == 0 {
+            return Err(EnigmaError::Chunking(
+                "target_size must be greater than 0".to_string(),
+            ));
+        }
+        Ok(Self {
             min_size: target_size / 4,
             avg_size: target_size,
             max_size: target_size * 4,
-        }
+        })
     }
 }
 
 impl Default for CdcChunkEngine {
     fn default() -> Self {
-        Self::new(4 * 1024 * 1024) // 4 MB
+        // SAFETY: 4 MB is always > 0
+        Self::new(4 * 1024 * 1024).expect("default target_size is non-zero")
     }
 }
 

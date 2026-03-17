@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 
+/// The well-known key used to store the encrypted manifest.
+pub const MANIFEST_KEY: &str = "enigma-manifest.enc";
+
 /// Trait for cloud/local storage backends.
 #[async_trait]
 pub trait StorageProvider: Send + Sync {

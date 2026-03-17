@@ -69,12 +69,17 @@ impl RaftService for EnigmaRaftGrpcServer {
         &self,
         request: Request<tonic::Streaming<SnapshotChunk>>,
     ) -> Result<Response<ProtoSnapshotResp>, Status> {
+        const MAX_SNAPSHOT_SIZE: usize = 1024 * 1024 * 1024; // 1 GB
+
         // Receive all chunks from the stream
         let mut stream = request.into_inner();
         let mut payload = Vec::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             payload.extend_from_slice(&chunk.data);
+            if payload.len() > MAX_SNAPSHOT_SIZE {
+                return Err(Status::resource_exhausted("snapshot too large"));
+            }
         }
 
         // Parse: [8 bytes meta_len LE][meta JSON][DB bytes]
