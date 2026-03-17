@@ -124,6 +124,9 @@ base64 = "0.22"
 # Hex
 hex = "0.4"
 
+# OpenSSL (vendored for cross-compilation)
+openssl = { version = "0.10", features = ["vendored"] }
+
 # Internal
 enigma-core = { path = "crates/enigma-core" }
 enigma-storage = { path = "crates/enigma-storage" }

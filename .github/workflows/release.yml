@@ -66,10 +66,12 @@ jobs:
       - name: Build (cross aarch64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          cargo build --release --target ${{ matrix.target }} -p enigma-cli
-          cargo build --release --target ${{ matrix.target }} -p enigma-proxy
+          cargo build --release --target ${{ matrix.target }} -p enigma-cli --features vendored-openssl
+          cargo build --release --target ${{ matrix.target }} -p enigma-proxy --features vendored-openssl
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
 
       - name: Build
         if: matrix.target != 'aarch64-unknown-linux-gnu'
