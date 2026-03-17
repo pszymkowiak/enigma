@@ -81,12 +81,28 @@ pub async fn handle_list_objects_v2(
 
     let output = ListObjectsV2Output {
         name: Some(bucket.to_string()),
-        prefix: if prefix.is_empty() { None } else { Some(prefix.to_string()) },
-        delimiter: if delimiter.is_empty() { None } else { Some(delimiter.to_string()) },
+        prefix: if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.to_string())
+        },
+        delimiter: if delimiter.is_empty() {
+            None
+        } else {
+            Some(delimiter.to_string())
+        },
         max_keys: Some(max_keys as i32),
         key_count: Some(contents.len() as i32),
-        contents: if contents.is_empty() { None } else { Some(contents) },
-        common_prefixes: if common_prefix_list.is_empty() { None } else { Some(common_prefix_list) },
+        contents: if contents.is_empty() {
+            None
+        } else {
+            Some(contents)
+        },
+        common_prefixes: if common_prefix_list.is_empty() {
+            None
+        } else {
+            Some(common_prefix_list)
+        },
         is_truncated: Some(is_truncated),
         next_continuation_token: if is_truncated { Some(last_key) } else { None },
         ..Default::default()

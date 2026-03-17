@@ -155,9 +155,7 @@ async fn multicloud_azure_gcs_e2e() {
     let gcs = enigma_storage::gcs::GcsStorageProvider::new(&gcs_bucket, "gcs-e2e")
         .await
         .expect("GCS init failed");
-    gcs.test_connection()
-        .await
-        .expect("GCS connection failed");
+    gcs.test_connection().await.expect("GCS connection failed");
 
     println!("OK: Both providers connected (Azure + GCS)");
 
@@ -238,7 +236,10 @@ async fn multicloud_azure_gcs_e2e() {
                 .upload_chunk(&storage_key, &encrypted.ciphertext)
                 .await
                 .unwrap_or_else(|e| {
-                    panic!("Upload failed to {} for chunk {}: {}", target.name, hash_hex, e)
+                    panic!(
+                        "Upload failed to {} for chunk {}: {}",
+                        target.name, hash_hex, e
+                    )
                 });
 
             uploaded_keys.push((target.id, storage_key.clone()));
@@ -300,7 +301,12 @@ async fn multicloud_azure_gcs_e2e() {
         let plaintext = decrypt_chunk(&encrypted, &key_material).expect("decrypt failed");
 
         let computed = compute_hash(&plaintext);
-        assert_eq!(computed.to_hex(), hash_hex, "chunk hash mismatch at {}", idx);
+        assert_eq!(
+            computed.to_hex(),
+            hash_hex,
+            "chunk hash mismatch at {}",
+            idx
+        );
 
         restored_data.extend_from_slice(&plaintext);
 

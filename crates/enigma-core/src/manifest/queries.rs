@@ -303,9 +303,9 @@ impl ManifestDb {
 
     /// Get all replica locations for a chunk.
     pub fn get_chunk_replicas(&self, chunk_hash: &str) -> Result<Vec<(i64, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT provider_id, storage_key FROM chunk_replicas WHERE chunk_hash=?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT provider_id, storage_key FROM chunk_replicas WHERE chunk_hash=?1")?;
         let rows = stmt.query_map(params![chunk_hash], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -459,9 +459,7 @@ impl ManifestDb {
     }
 
     /// Detailed chunk storage metrics.
-    pub fn chunk_storage_details(
-        &self,
-    ) -> Result<(u64, u64, u64, Option<u64>, u64)> {
+    pub fn chunk_storage_details(&self) -> Result<(u64, u64, u64, Option<u64>, u64)> {
         // total_size_plain, total_size_encrypted, total_size_compressed, total_refs
         let mut stmt = self.conn.prepare(
             "SELECT COALESCE(SUM(size_plain),0), COALESCE(SUM(size_encrypted),0), SUM(size_compressed), COALESCE(SUM(ref_count),0) FROM chunks",
@@ -509,7 +507,10 @@ impl ManifestDb {
 
     /// Recent chunks: Vec<(hash, provider_name, size_plain, size_encrypted, ref_count, created_at)>
     #[allow(clippy::type_complexity)]
-    pub fn recent_chunks(&self, limit: u32) -> Result<Vec<(String, String, u64, u64, u64, String)>> {
+    pub fn recent_chunks(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<(String, String, u64, u64, u64, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT c.hash, COALESCE(p.name, 'unknown'), c.size_plain, c.size_encrypted, c.ref_count, c.created_at
              FROM chunks c LEFT JOIN providers p ON c.provider_id = p.id

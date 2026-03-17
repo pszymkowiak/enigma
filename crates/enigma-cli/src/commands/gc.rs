@@ -35,7 +35,10 @@ pub async fn run(base_dir: &Path, dry_run: bool) -> Result<()> {
         // Also gather replicas for this orphan chunk
         if let Ok(replicas) = db.get_chunk_replicas(hash) {
             for (pid, skey) in replicas {
-                if !all_deletions.iter().any(|(_, p, s)| *p == pid && *s == skey) {
+                if !all_deletions
+                    .iter()
+                    .any(|(_, p, s)| *p == pid && *s == skey)
+                {
                     all_deletions.push((hash.clone(), pid, skey));
                 }
             }
@@ -43,13 +46,19 @@ pub async fn run(base_dir: &Path, dry_run: bool) -> Result<()> {
     }
     // Add standalone orphan replicas
     for (hash, pid, skey) in &orphan_replicas {
-        if !all_deletions.iter().any(|(_, p, s)| *p == *pid && *s == *skey) {
+        if !all_deletions
+            .iter()
+            .any(|(_, p, s)| *p == *pid && *s == *skey)
+        {
             all_deletions.push((hash.clone(), *pid, skey.clone()));
         }
     }
 
     if dry_run {
-        println!("\nDry run — would delete {} storage entries:", all_deletions.len());
+        println!(
+            "\nDry run — would delete {} storage entries:",
+            all_deletions.len()
+        );
         for (hash, provider_id, storage_key) in &all_deletions {
             println!("  {hash}  provider={provider_id}  key={storage_key}");
         }

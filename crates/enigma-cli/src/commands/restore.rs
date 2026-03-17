@@ -124,7 +124,9 @@ pub async fn run(
                             break;
                         }
                         Err(e) => {
-                            eprintln!("WARN: Provider {pid} failed for chunk {chunk_hash}: {e}, trying next");
+                            eprintln!(
+                                "WARN: Provider {pid} failed for chunk {chunk_hash}: {e}, trying next"
+                            );
                         }
                     }
                 }

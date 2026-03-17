@@ -84,9 +84,7 @@ pub async fn handle_put_object(
             .map_err(|_| s3_error!(InternalError))?
         };
 
-        if is_new
-            && let Some(provider) = state.providers.get(&target_provider.id)
-        {
+        if is_new && let Some(provider) = state.providers.get(&target_provider.id) {
             provider
                 .upload_chunk(&storage_key, &encrypted.ciphertext)
                 .await

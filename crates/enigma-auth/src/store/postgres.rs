@@ -240,14 +240,13 @@ impl AuthStore for PostgresAuthStore {
     }
 
     async fn get_password_hash(&self, user_id: &str) -> Result<String, AuthError> {
-        let row = sqlx::query_as::<_, (String,)>(
-            "SELECT password_hash FROM auth_users WHERE id = $1",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AuthError::Database(e.to_string()))?
-        .ok_or_else(|| AuthError::NotFound("user not found".into()))?;
+        let row =
+            sqlx::query_as::<_, (String,)>("SELECT password_hash FROM auth_users WHERE id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AuthError::Database(e.to_string()))?
+                .ok_or_else(|| AuthError::NotFound("user not found".into()))?;
         Ok(row.0)
     }
 
@@ -352,13 +351,12 @@ impl AuthStore for PostgresAuthStore {
 
     async fn update_group(&self, id: &str, req: &UpdateGroupRequest) -> Result<Group, AuthError> {
         if let Some(ref desc) = req.description {
-            let result =
-                sqlx::query("UPDATE auth_groups SET description = $1 WHERE id = $2")
-                    .bind(desc)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| AuthError::Database(e.to_string()))?;
+            let result = sqlx::query("UPDATE auth_groups SET description = $1 WHERE id = $2")
+                .bind(desc)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AuthError::Database(e.to_string()))?;
             if result.rows_affected() == 0 {
                 return Err(AuthError::NotFound("group not found".into()));
             }
@@ -367,14 +365,12 @@ impl AuthStore for PostgresAuthStore {
     }
 
     async fn delete_group(&self, id: &str) -> Result<(), AuthError> {
-        let row = sqlx::query_as::<_, (bool,)>(
-            "SELECT is_system FROM auth_groups WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AuthError::Database(e.to_string()))?
-        .ok_or_else(|| AuthError::NotFound("group not found".into()))?;
+        let row = sqlx::query_as::<_, (bool,)>("SELECT is_system FROM auth_groups WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AuthError::Database(e.to_string()))?
+            .ok_or_else(|| AuthError::NotFound("group not found".into()))?;
         if row.0 {
             return Err(AuthError::Forbidden("cannot delete system group".into()));
         }
@@ -422,7 +418,10 @@ impl AuthStore for PostgresAuthStore {
         Ok(())
     }
 
-    async fn list_group_permissions(&self, group_id: &str) -> Result<Vec<crate::types::Permission>, AuthError> {
+    async fn list_group_permissions(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<crate::types::Permission>, AuthError> {
         let rows = sqlx::query_as::<_, (String, String, String, String)>(
             "SELECT p.id, p.action, p.description, p.created_at::text
              FROM auth_permissions p
@@ -715,7 +714,17 @@ impl AuthStore for PostgresAuthStore {
     }
 
     async fn list_audit(&self, limit: u32, offset: u32) -> Result<Vec<AuditEntry>, AuthError> {
-        let rows = sqlx::query_as::<_, (i64, Option<String>, String, Option<String>, Option<String>, String)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                i64,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+            ),
+        >(
             "SELECT id, user_id, action, target, ip_addr, created_at::text
              FROM auth_audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )

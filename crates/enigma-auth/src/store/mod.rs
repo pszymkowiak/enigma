@@ -95,11 +95,7 @@ pub trait AuthStore: Send + Sync {
         target: Option<&str>,
         ip_addr: Option<&str>,
     ) -> Result<(), AuthError>;
-    async fn list_audit(
-        &self,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<AuditEntry>, AuthError>;
+    async fn list_audit(&self, limit: u32, offset: u32) -> Result<Vec<AuditEntry>, AuthError>;
 
     // Lifecycle
     async fn migrate(&self) -> Result<(), AuthError>;

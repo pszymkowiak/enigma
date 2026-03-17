@@ -11,7 +11,7 @@ pub use error::AuthError;
 pub use jwt::{AuthClaims, create_jwt, verify_jwt};
 pub use middleware::AuthUser;
 pub use password::{hash_password, verify_password};
-pub use permissions::{has_permission, PERMISSIONS};
+pub use permissions::{PERMISSIONS, has_permission};
 pub use store::{AuthStore, SqliteAuthStore};
 pub use token::{generate_api_token, hash_token};
 pub use types::*;

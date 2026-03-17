@@ -3,11 +3,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use openraft::storage::RaftStateMachine;
+use openraft::storage::SnapshotSignature;
 use openraft::{
     BasicNode, Entry, EntryPayload, LogId, OptionalSend, Snapshot, SnapshotMeta, StorageError,
     StoredMembership,
 };
-use openraft::storage::SnapshotSignature;
 
 use enigma_core::manifest::ManifestDb;
 
@@ -260,8 +260,8 @@ impl RaftStateMachine<TypeConfig> for EnigmaStateMachine {
             "Installing snapshot — restoring ManifestDb"
         );
 
-        let new_db = ManifestDb::restore_from_bytes(&bytes, Path::new(&self.db_path))
-            .map_err(|e| {
+        let new_db =
+            ManifestDb::restore_from_bytes(&bytes, Path::new(&self.db_path)).map_err(|e| {
                 let io_err = std::io::Error::other(e.to_string());
                 StorageError::from_io_error(
                     openraft::ErrorSubject::Snapshot(Some(SnapshotSignature {
@@ -306,10 +306,7 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilde
         let last_applied = *self.last_applied.lock().unwrap();
         let membership = self.last_membership.lock().unwrap().clone();
 
-        let snapshot_id = format!(
-            "snapshot-{}",
-            last_applied.map(|l| l.index).unwrap_or(0)
-        );
+        let snapshot_id = format!("snapshot-{}", last_applied.map(|l| l.index).unwrap_or(0));
 
         tracing::info!(
             snapshot_id = %snapshot_id,
@@ -319,15 +316,14 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for EnigmaSnapshotBuilde
 
         let bytes = {
             let db = self.db.lock().unwrap();
-            db.snapshot_to_bytes()
-                .map_err(|e| {
-                    let io_err = std::io::Error::other(e.to_string());
-                    StorageError::from_io_error(
-                        openraft::ErrorSubject::Snapshot(None::<SnapshotSignature<u64>>),
-                        openraft::ErrorVerb::Write,
-                        io_err,
-                    )
-                })?
+            db.snapshot_to_bytes().map_err(|e| {
+                let io_err = std::io::Error::other(e.to_string());
+                StorageError::from_io_error(
+                    openraft::ErrorSubject::Snapshot(None::<SnapshotSignature<u64>>),
+                    openraft::ErrorVerb::Write,
+                    io_err,
+                )
+            })?
         };
 
         tracing::info!(bytes = bytes.len(), "Snapshot built successfully");

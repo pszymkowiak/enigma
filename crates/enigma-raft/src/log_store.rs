@@ -133,7 +133,8 @@ impl RaftLogStorage<TypeConfig> for SqliteLogStore {
             Some(path) => {
                 let conn = rusqlite::Connection::open_with_flags(
                     path,
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
                 )
                 .expect("Failed to open log reader connection");
                 Self {

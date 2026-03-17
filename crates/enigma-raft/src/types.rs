@@ -86,11 +86,7 @@ pub enum RaftResponse {
     NamespaceId(i64),
     ObjectId(i64),
     ProviderId(i64),
-    ChunkInserted {
-        is_new: bool,
-    },
-    ChunksDeleted {
-        deletions: Vec<(i64, String)>,
-    },
+    ChunkInserted { is_new: bool },
+    ChunksDeleted { deletions: Vec<(i64, String)> },
     Error(String),
 }

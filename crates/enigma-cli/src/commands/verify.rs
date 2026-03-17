@@ -64,7 +64,9 @@ pub async fn run(backup_id: &str, base_dir: &Path, cli_passphrase: &Option<Strin
                             break;
                         }
                         Err(e) => {
-                            eprintln!("WARN: provider {pid} failed for chunk {chunk_hash}: {e}, trying next");
+                            eprintln!(
+                                "WARN: provider {pid} failed for chunk {chunk_hash}: {e}, trying next"
+                            );
                         }
                     }
                 }
